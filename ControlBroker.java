@@ -190,10 +190,10 @@ public class ControlBroker extends DatacenterBroker {
             long remainingWork = 0;
             for (Cloudlet cloudlet : vm.getCloudletScheduler().getCloudletExecList()) {
                 remainingWork += cloudlet.getRemainingCloudletLength();
-                }
+            }
 
-            double utilization = vm.getTotalUtilizationOfCpuMips(now);
-            Log.printlnConcat("VM #", vm.getId(), " | Previous work: ", work, " | Current remaining work: ", remainingWork, " | Utilization: ", utilization);
+            double normalisedLoad = remainingWork / vm.getMips();
+            Log.printlnConcat("VM #", vm.getId(), " | Previous work: ", work, " | Current remaining work: ", remainingWork, " | Normalised Load: ", normalisedLoad);
             
         }
     }
