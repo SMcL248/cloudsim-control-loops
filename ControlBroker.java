@@ -21,7 +21,7 @@ public class ControlBroker extends DatacenterBroker {
 
     // This map keeps track of the total work assigned to each VM. 
     // The key is the VM id and the value is the total length of cloudlets assigned to that VM.
-    private Map<Integer, Long> vmAssignedWork = new HashMap<>();
+    private Map<Integer, Double> vmAssignedWork = new HashMap<>();
     private int observationRate;
 
     public ControlBroker(String name, int observationRate) throws Exception {
@@ -96,7 +96,7 @@ public class ControlBroker extends DatacenterBroker {
             shutdownEntity();
 
         } else if (tag == CloudActionTags.VM_BROKER_EVENT) {
-            observeAndAdjust();
+            observeAndAct();
         }else {
             processOtherEvent(ev);
         }
@@ -110,11 +110,11 @@ public class ControlBroker extends DatacenterBroker {
     }
 
     @Override
+    // This method is called at the end of the simulation. It cancels any pending events for this entity.
     public void shutdownEntity() {
         CloudSim.cancelAll(getId(), CloudSim.SIM_ANY);
         super.shutdownEntity();
     }
-
 
     // Implements a simple least occupied policy: selects the VM with least work assigned to it. 
     // Work is measured in terms of total length of cloudlets assigned to the VM.
@@ -127,12 +127,12 @@ public class ControlBroker extends DatacenterBroker {
         }
 
         HostEntity bestHost = null;
-        long bestWork = Long.MAX_VALUE;
+        double bestWork = Double.MAX_VALUE;
 
         for (Map.Entry<HostEntity, List<GuestEntity>> entry : hostToVmMap.entrySet()) {
-            long totalWork = 0;
+            double totalWork = 0;
             for (GuestEntity vm : entry.getValue()) {
-                totalWork += vmAssignedWork.getOrDefault(vm.getId(), 0L);
+                totalWork += vmAssignedWork.getOrDefault(vm.getId(), 0.0);
             }
             if (totalWork < bestWork) {
                 bestWork = totalWork;   
@@ -145,113 +145,152 @@ public class ControlBroker extends DatacenterBroker {
         }      
 
         GuestEntity bestVm = null;
-        long bestVmWork = Long.MAX_VALUE;
+        double bestVmWork = Double.MAX_VALUE;
 
         for (GuestEntity vm : hostToVmMap.get(bestHost)) {
-            long vmWork = vmAssignedWork.getOrDefault(vm.getId(), 0L);
-            if (vmWork < bestVmWork) {
-                bestVmWork = vmWork;
+            double etc = vmAssignedWork.getOrDefault(vm.getId(), 0.0);
+            if (etc < bestVmWork) {
+                bestVmWork = etc;
                 bestVm = vm;
             }
         }
 
-        vmAssignedWork.merge(bestVm.getId(), cloudlet.getCloudletLength(), Long::sum);
+        vmAssignedWork.merge(bestVm.getId(), cloudlet.getCloudletLength() / (double) bestVm.getMips(), Double::sum);
 
         return bestVm;
     }
 
-    // This method is the main method that implements the control loop.
-    // - observes and prints the current state of the system, 
-    // - refreshes the work assigned to each VM, 
-    // - adjusts the allocation by migrating cloudlets if necessary.
-    private void observeAndAdjust() {
+    // New control loop implementing observe -> decide -> act flow.
+    private void observeAndAct() {
 
         if (getCloudletList().isEmpty() && getCloudletSubmittedList().size() == getCloudletReceivedList().size()) {
             return; // all work done, skip observation
         }
 
-        observe();
+        Map<GuestEntity, Double> systemMetrics = observe();
+
+        // decide which migrations (if any) should occur
+        List<MigrationPair> migrations = decide(systemMetrics);
+
+        // perform migrations and get success status
+        boolean success = act(migrations);
+
+        if (!success) {
+            Log.println("The system is balanced. No migration needed.");
+        }
+
+        // refresh internal workload state based on executing cloudlets
         refreshWork();
-        adjust();
 
         schedule(getId(), observationRate, CloudActionTags.VM_BROKER_EVENT);
 
     }
 
-    // This method prints the current work assigned to each VM and its CPU utilization.
-    private void observe(){
+    // This method observes the system and returns metrics (ETC per VM).
+    private Map<GuestEntity, Double> observe(){
 
         double now = CloudSim.clock();
 
         Log.printlnConcat(now, ": ", getName(), ": Observing...");
 
+        Map<GuestEntity, Double> metrics = new HashMap<>();
+
         for (GuestEntity vm : getGuestsCreatedList()) {
-            long work = vmAssignedWork.getOrDefault(vm.getId(), 0L);
             long remainingWork = 0;
             for (Cloudlet cloudlet : vm.getCloudletScheduler().getCloudletExecList()) {
                 remainingWork += cloudlet.getRemainingCloudletLength();
             }
 
-            double normalisedLoad = remainingWork / vm.getMips();
-            Log.printlnConcat("VM #", vm.getId(), " | Previous work: ", work, " | Current remaining work: ", remainingWork, " | Normalised Load: ", normalisedLoad);
-            
+            double currentETC = remainingWork / vm.getMips();
+            int numCloudlets = vm.getCloudletScheduler().getCloudletExecList().size();
+            Log.printlnConcat("VM #", vm.getId(), "| MIPS: ", vm.getMips(), "| Outstanding Work: ", remainingWork, " | Current ETC: ", currentETC, " | Number of Cloudlets: ", numCloudlets);
+            metrics.put(vm, currentETC);
         }
+
+        return metrics;
     }
 
     // This method refreshes the work assigned to each VM by checking the cloudlets currently executing on it and summing their remaining lengths.
     private void refreshWork() {
 
         for (GuestEntity vm : getGuestsCreatedList()) {
-            long remainingWork = 0;
+            double remainingWork = 0;
             for (Cloudlet cloudlet : vm.getCloudletScheduler().getCloudletExecList()) {
                 remainingWork += cloudlet.getRemainingCloudletLength();
                 }
-            vmAssignedWork.put(vm.getId(), remainingWork);
+            vmAssignedWork.put(vm.getId(), remainingWork / (double) vm.getMips());
 
         }
     }
 
-    // This method checks if there are VMs that are significantly more loaded than others (e.g., with work greater than mean + standard deviation) and if there are VMs that are significantly less loaded than others (e.g., with work less than mean - standard deviation). 
-    // If such VMs exist, it migrates a cloudlet from the most loaded VM to the least loaded VM.
-    private void adjust() {
+    // This method decides which migrations (if any) should be performed based on current metrics.
+    private List<MigrationPair> decide(Map<GuestEntity, Double> metrics) {
 
-        long meanWork = vmAssignedWork.values().stream().mapToLong(Long::longValue).sum()/vmAssignedWork.size();
-        long standardDeviation = (long) Math.sqrt(vmAssignedWork.values().stream().mapToLong(work -> (work - meanWork) * (work - meanWork)).sum()/vmAssignedWork.size());
+        List<MigrationPair> migrations = new ArrayList<>();
 
-        long leastLoadedWork = Long.MAX_VALUE;
-        long mostLoadedWork = 0;
+        double meanETC = metrics.values().stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+        double standardDeviation = Math.sqrt(metrics.values().stream().mapToDouble(work -> (work - meanETC) * (work - meanETC)).sum()/metrics.size());
+
+        double smallestETC = Double.MAX_VALUE;
+        double largestETC = 0;
 
         GuestEntity leastLoadedVm = null;
         GuestEntity mostLoadedVm = null;
 
         for (GuestEntity vm : getGuestsCreatedList()) {
 
-            long work = vmAssignedWork.getOrDefault(vm.getId(), 0L);
+            double etc = metrics.getOrDefault(vm, 0.0);
 
-            if (work > meanWork + standardDeviation) {
+            if (etc < smallestETC) {
+                smallestETC = etc;
+                leastLoadedVm = vm;
+            }
+
+            if (etc > meanETC + standardDeviation) {
                 Log.printlnConcat("VM #", vm.getId(), " is overloaded.");
-                if (work > mostLoadedWork) {
-                    mostLoadedWork = work;
+                if (etc > largestETC) {
+                    largestETC = etc;
                     mostLoadedVm = vm;
                 }
-            } else if (work < meanWork - standardDeviation) {
+            } else if (etc < meanETC - standardDeviation) {
                 Log.printlnConcat("VM #", vm.getId(), " is underloaded.");
-                if (work < leastLoadedWork) {
-                    leastLoadedWork = work;
-                    leastLoadedVm = vm;
-                }
             } else {
                 Log.printlnConcat("VM #", vm.getId(), " is balanced. ");
             }
 
         }
 
-        if (mostLoadedVm != null && leastLoadedVm != null && migrationWorthwhile(mostLoadedVm, leastLoadedVm, meanWork)) {
-            migrateCloudlet(mostLoadedVm, leastLoadedVm);
-        } else {
-            Log.println("The system is balanced. No migration needed.");
+        if (largestETC > 2.0 * smallestETC && 
+            mostLoadedVm != null && 
+            leastLoadedVm != null && 
+            mostLoadedVm != leastLoadedVm && 
+            migrationWorthwhile(mostLoadedVm, leastLoadedVm, meanETC)) {
+
+            migrations.add(new MigrationPair(mostLoadedVm, leastLoadedVm));
+
         }
 
+        return migrations;
+    }
+
+    // This method performs the migrations decided by `decide` and returns success/failure.
+    private boolean act(List<MigrationPair> migrations) {
+        boolean any = false;
+        for (MigrationPair p : migrations) {
+            migrateCloudlet(p.from, p.to);
+            any = true;
+        }
+        return any;
+    }
+
+    // Simple holder for a migration from one VM to another
+    private static class MigrationPair {
+        final GuestEntity from;
+        final GuestEntity to;
+        MigrationPair(GuestEntity from, GuestEntity to) {
+            this.from = from;
+            this.to = to;
+        }
     }
 
     // This method migrates a cloudlet from the most loaded VM to the least loaded VM.
@@ -299,8 +338,8 @@ public class ControlBroker extends DatacenterBroker {
         send(datacenterId, 0.001, CloudActionTags.CLOUDLET_SUBMIT, cloudletToMigrate);
 
         // Update the work assigned to each VM
-        vmAssignedWork.merge(fromVm.getId(), -remainingLength, Long::sum);
-        vmAssignedWork.merge(toVm.getId(), remainingLength, Long::sum);
+        vmAssignedWork.merge(fromVm.getId(), -remainingLength / (double) fromVm.getMips(), Double::sum);
+        vmAssignedWork.merge(toVm.getId(), remainingLength / (double) toVm.getMips(), Double::sum);
     }
 
     // This method determines if migrating a cloudlet from one VM to another is worthwhile.
@@ -326,7 +365,7 @@ public class ControlBroker extends DatacenterBroker {
 
         double improvement = (mostWork / effectiveMipsFrom) - (mostWork / effectiveMipsTo);
 
-        double MINIMUM_IMPROVEMENT = meanWork / fromVm.getMips() * 0.05;
+        double MINIMUM_IMPROVEMENT = meanWork * 0.05;
 
         return improvement > MINIMUM_IMPROVEMENT;
     }
