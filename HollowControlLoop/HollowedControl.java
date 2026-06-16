@@ -13,15 +13,15 @@ import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.SimEvent;
 
 
-public class HollowedControl extends DatacenterBroker implements SimulationContext {
+public class HollowedControl<M,D,A> extends DatacenterBroker implements SimulationContext {
 
-    private final Monitor monitor;
-    private final Analyser analyser;
-    private final Planner planner;
-    private final Executor executor;
+    private final Monitor<M> monitor;
+    private final Analyser<M,D> analyser;
+    private final Planner<D,A> planner;
+    private final Executor<A> executor;
     private final int observationRate;
 
-    public HollowedControl(String name, int observationRate, Monitor monitor, Analyser analyser, Planner planner, Executor executor) throws Exception {
+    public HollowedControl(String name, int observationRate, Monitor<M> monitor, Analyser<M,D> analyser, Planner<D,A> planner, Executor<A> executor) throws Exception {
         super(name);
         this.observationRate = observationRate;
         this.monitor = monitor;
@@ -98,9 +98,9 @@ public class HollowedControl extends DatacenterBroker implements SimulationConte
         WorldState worldState = new WorldState(getGuestsCreatedList(), List.of(), CloudSim.clock());
 
         // Control loop: monitor, analyze, plan, and execute (MAPE)
-        Map<GuestEntity, Map<String, Double>> metrics = monitor.observe(worldState);
-        Diagnosis diagnosis = analyser.analyse(metrics);
-        List<MigrationPair> migrations = planner.plan(diagnosis);
+        M metrics = monitor.observe(worldState);
+        D diagnosis = analyser.analyse(metrics);
+        A migrations = planner.plan(diagnosis);
         boolean success = executor.execute(migrations, this);
 
         // Print the results of the control loop

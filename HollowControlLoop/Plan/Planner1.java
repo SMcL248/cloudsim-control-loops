@@ -6,7 +6,7 @@ import java.util.List;
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
-public class Planner1 implements Planner {
+public class Planner1 implements Planner<Diagnosis, List<MigrationPair>> {
 
     @Override
     public List<MigrationPair> plan(Diagnosis diagnosis) {

@@ -6,7 +6,7 @@ import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
-public class Executor1 implements Executor {
+public class Executor1 implements Executor<List<MigrationPair>> {
 
     @Override
     public boolean execute(List<MigrationPair> migrations, SimulationContext context) {

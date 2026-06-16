@@ -7,7 +7,7 @@ import java.util.Set;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
-public class Analyser1 implements Analyser {
+public class Analyser1 implements Analyser<Map<GuestEntity, Map<String, Double>>, Diagnosis> {
 
     private static final String METRIC = "etc";
 

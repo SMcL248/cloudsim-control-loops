@@ -8,7 +8,7 @@ import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
-public class Monitor1 implements Monitor {
+public class Monitor1 implements Monitor<Map<GuestEntity, Map<String, Double>>> {
 
     @Override
     public Map<GuestEntity, Map<String, Double>> observe(WorldState worldState) {

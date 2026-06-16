@@ -5,9 +5,9 @@ import java.util.Set;
 
 import org.cloudbus.cloudsim.core.GuestEntity;
 
-public interface Analyser {
+public interface Analyser<M, D> {
 
-    Diagnosis analyse(Map<GuestEntity, Map<String, Double>> metrics);
+    D analyse(M metrics);
     Set<String> requiredMetrics(); // e.g. {"etc"}
     
 }
