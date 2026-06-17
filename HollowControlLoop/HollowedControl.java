@@ -133,11 +133,8 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements Simulati
         if (!success) {
             Log.println("The system is balanced. No migration needed.");
         }
-
-        if (CloudSim.clock() <= 1000){
-            schedule(getId(), observationRate, CloudActionTags.VM_BROKER_EVENT);
-        }
         // Schedule the next observation
+        schedule(getId(), observationRate, CloudActionTags.VM_BROKER_EVENT);
 
     }
         
