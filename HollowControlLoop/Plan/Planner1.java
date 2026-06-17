@@ -6,20 +6,39 @@ import java.util.List;
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
-public class Planner1 implements Planner<Diagnosis, List<MigrationPair>> {
+public class Planner1 implements Planner<Diagnosis<GuestEntity>, List<MigrationPair>> {
 
     @Override
-    public List<MigrationPair> plan(Diagnosis diagnosis) {
+    public List<MigrationPair> plan(Diagnosis<GuestEntity> diagnosis) {
+
         List<MigrationPair> migrations = new ArrayList<>();
 
-        GuestEntity mostLoaded = diagnosis.mostLoaded();
-        GuestEntity leastLoaded = diagnosis.leastLoaded();
+        // Derive mostLoaded and leastLoaded from values and classification
+        GuestEntity mostLoaded = null;
+        GuestEntity leastLoaded = null;
+        double largest = 0;
+        double smallest = Double.MAX_VALUE;
+
+        for (var entry : diagnosis.values().entrySet()) {
+            GuestEntity vm = entry.getKey();
+            double value = entry.getValue();
+            LoadState state = diagnosis.classification().get(vm);
+
+            if (state == LoadState.OVERLOADED && value > largest) {
+                largest = value;
+                mostLoaded = vm;
+            }
+            if (value < smallest) {
+                smallest = value;
+                leastLoaded = vm;
+            }
+        }
+
+        double mean = diagnosis.values().values().stream()
+                .mapToDouble(Double::doubleValue).average().orElse(0.0);
 
         if (mostLoaded != null && leastLoaded != null && mostLoaded != leastLoaded) {
-            double largest = diagnosis.values().get(mostLoaded);
-            double smallest = diagnosis.values().get(leastLoaded);
-
-            if (largest > 2.0 * smallest && migrationWorthwhile(mostLoaded, leastLoaded, diagnosis.mean())) {
+            if (largest > 2.0 * smallest && migrationWorthwhile(mostLoaded, leastLoaded, mean)) {
                 migrations.add(new MigrationPair(mostLoaded, leastLoaded));
             }
         }
@@ -51,5 +70,7 @@ public class Planner1 implements Planner<Diagnosis, List<MigrationPair>> {
         double MINIMUM_IMPROVEMENT = meanWork * 0.05;
 
         return improvement > MINIMUM_IMPROVEMENT;
+        
     }
+
 }

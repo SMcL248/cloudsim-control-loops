@@ -1,16 +1,22 @@
 package org.cloudbus.cloudsim.examples;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import javax.print.attribute.IntegerSyntax;
 
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.DatacenterBroker;
 import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.VmAllocationPolicy.GuestMapping;
 import org.cloudbus.cloudsim.core.CloudActionTags;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.core.CloudSimTags;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.SimEvent;
+import org.cloudbus.cloudsim.core.HostEntity;
 
 
 public class HollowedControl<M,D,A> extends DatacenterBroker implements SimulationContext {
@@ -86,6 +92,26 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements Simulati
         send(datacenterId, delay, CloudActionTags.CLOUDLET_SUBMIT, cloudlet);
     }
 
+    @Override
+    public void requestVmMigration(GuestEntity vm, HostEntity targetHost){
+
+        GuestMapping payload = new GuestMapping(vm, targetHost);
+        send(getDatacenterFor(vm), 0, CloudActionTags.VM_MIGRATE, payload);
+
+    }
+
+    //Retrieves list of all hosts in this datacenter
+    private Map<Integer, List<HostEntity>> getAllHosts() {
+
+        Map<Integer, List<HostEntity>> hosts = new HashMap<>();
+
+        for (var characteristics : getDatacenterCharacteristicsList().values()) {
+            hosts.put(characteristics.getId(), characteristics.getHostList());
+        }
+
+        return hosts;
+    }
+
     // This method observes the current state of the system, analyzes it, plans migrations if necessary, and executes them.
     private void observeAndAct() {
 
@@ -95,21 +121,24 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements Simulati
         }
 
         // Take a snapshot of the current state of the system
-        WorldState worldState = new WorldState(getGuestsCreatedList(), List.of(), CloudSim.clock());
+        WorldState worldState = new WorldState(getGuestsCreatedList(), getAllHosts(), CloudSim.clock());
 
         // Control loop: monitor, analyze, plan, and execute (MAPE)
         M metrics = monitor.observe(worldState);
         D diagnosis = analyser.analyse(metrics);
-        A migrations = planner.plan(diagnosis);
-        boolean success = executor.execute(migrations, this);
+        A actions = planner.plan(diagnosis);
+        boolean success = executor.execute(actions, this);
 
         // Print the results of the control loop
         if (!success) {
             Log.println("The system is balanced. No migration needed.");
         }
 
+        if (CloudSim.clock() <= 1000){
+            schedule(getId(), observationRate, CloudActionTags.VM_BROKER_EVENT);
+        }
         // Schedule the next observation
-        schedule(getId(), observationRate, CloudActionTags.VM_BROKER_EVENT);
+
     }
         
 }
