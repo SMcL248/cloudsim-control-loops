@@ -19,7 +19,7 @@ import org.cloudbus.cloudsim.core.SimEvent;
 import org.cloudbus.cloudsim.core.HostEntity;
 
 
-public class HollowedControl<M,D,A> extends DatacenterBroker implements SimulationContext {
+public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSpace {
 
     private final Monitor<M> monitor;
     private final Analyser<M,D> analyser;
@@ -83,13 +83,25 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements Simulati
     @Override
     // This method returns the datacenter ID for a given VM. It uses the mapping of VMs to datacenters maintained by the broker.
     public Integer getDatacenterFor(GuestEntity vm) {
-        return getVmsToDatacentersMap().get(vm.getId());
+        return getVmsToDatacentersMap().get(vm.getId());    
     }
 
     @Override
     // This method sends a cloudlet to a datacenter with a specified delay. It uses the send() method of the broker.
     public void sendCloudlet(int datacenterId, double delay, Cloudlet cloudlet) {
         send(datacenterId, delay, CloudActionTags.CLOUDLET_SUBMIT, cloudlet);
+    }
+
+    @Override
+    // This method sends a cloudlet to a datacenter with a specified delay. It uses the send() method of the broker.
+    public void moveCloudlet(Cloudlet cloudlet, GuestEntity fromVm, GuestEntity toVm, int destDatacenterId) {
+        int[] data = new int[5];
+        data[0] = cloudlet.getCloudletId();
+        data[1] = cloudlet.getUserId();
+        data[2] = fromVm.getId();
+        data[3] = toVm.getId();
+        data[4] = destDatacenterId;
+        send(getDatacenterFor(fromVm), 0, CloudActionTags.CLOUDLET_MOVE, data);
     }
 
     @Override
@@ -131,7 +143,7 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements Simulati
 
         // Print the results of the control loop
         if (!success) {
-            Log.println("The system is balanced. No migration needed.");
+            Log.printlnConcat("The system is balanced. No ", executor.actionDescription(), " needed.");
         }
         // Schedule the next observation
         schedule(getId(), observationRate, CloudActionTags.VM_BROKER_EVENT);

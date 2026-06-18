@@ -5,7 +5,6 @@ import java.util.Map;
 import java.util.Set;
 
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
 
 public class Monitor3 implements Monitor<Map<Integer, Map<HostEntity, Map<String, Double>>>>{

@@ -11,7 +11,7 @@ import org.cloudbus.cloudsim.util.HistoryStat;
 public class Executor2 implements Executor<List<VmMigrationPair>>{
  
     @Override
-    public boolean execute(List<VmMigrationPair> migrations, SimulationContext context){
+    public boolean execute(List<VmMigrationPair> migrations, ActionSpace actionSpace){
 
         if (migrations.isEmpty()){
             return false;
@@ -24,11 +24,11 @@ public class Executor2 implements Executor<List<VmMigrationPair>>{
             GuestEntity vm = entry.vm();
             HostEntity targetHost = entry.targetHost();
 
-            Integer datacenterId = context.getDatacenterFor(vm);    
+            Integer datacenterId = actionSpace.getDatacenterFor(vm);    
             if (datacenterId == null) {
                 Log.printlnConcat("Cannot migrate VM #", vm.getId(), ": datacenter not found.");
             }else{
-                context.requestVmMigration(vm, targetHost);
+                actionSpace.requestVmMigration(vm, targetHost);
                 Log.printlnConcat("Requested migration of VM #", vm.getId(), " to Host #", targetHost.getId());
                 atLeastOneMigration = true;
                 break;
@@ -38,6 +38,11 @@ public class Executor2 implements Executor<List<VmMigrationPair>>{
 
         return atLeastOneMigration;
 
+    }
+
+    @Override
+    public String actionDescription(){
+        return "VM migration";
     }
 
 }

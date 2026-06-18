@@ -34,13 +34,13 @@ public class Analyser2 implements Analyser<Map<Integer, Map<HostEntity, Map<Stri
                 // Detemine load level
                 if (value > UPPER_THRESHOLD) {
                     classification.put(host, LoadState.OVERLOADED);
-                    Log.printlnConcat("Datacenter #", id, " Host #", host.getId(), " is overloaded.");
+                    Log.printlnConcat("Datacenter #", id, "| Host #", host.getId(), " is overloaded.");
                 } else if (value < LOWER_THRESHOLD) {
                     classification.put(host, LoadState.UNDERLOADED);
-                    Log.printlnConcat("Datacenter #", id, " Host #", host.getId(), " is underloaded.");
+                    Log.printlnConcat("Datacenter #", id, "| Host #", host.getId(), " is underloaded.");
                 } else {
                     classification.put(host, LoadState.BALANCED);
-                    Log.printlnConcat("Datacenter #", id, " Host #", host.getId(), " is balanced.");
+                    Log.printlnConcat("Datacenter #", id, "| Host #", host.getId(), " is balanced.");
                 }
         }
     }

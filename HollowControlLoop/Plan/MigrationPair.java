@@ -1,10 +1,12 @@
 package org.cloudbus.cloudsim.examples;
 
 import org.cloudbus.cloudsim.core.GuestEntity;
+import org.cloudbus.cloudsim.Cloudlet;
 
 public record MigrationPair (
 
-    GuestEntity vm, 
+    Cloudlet targetCloudlet, 
+    GuestEntity fromVm,
     GuestEntity targetVm
 
 ) {}

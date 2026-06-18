@@ -38,24 +38,34 @@ public class Planner1 implements Planner<Diagnosis<GuestEntity>, List<MigrationP
                 .mapToDouble(Double::doubleValue).average().orElse(0.0);
 
         if (mostLoaded != null && leastLoaded != null && mostLoaded != leastLoaded) {
-            if (largest > 2.0 * smallest && migrationWorthwhile(mostLoaded, leastLoaded, mean)) {
-                migrations.add(new MigrationPair(mostLoaded, leastLoaded));
+
+            double mostWork = 0;
+            Cloudlet cloudletToMigrate = null;
+            
+            // Find largest cloudlet on overloaded VM
+            for (Cloudlet cloudlet : mostLoaded.getCloudletScheduler().getCloudletExecList()) {
+                if (cloudlet.getRemainingCloudletLength() > mostWork) {
+                    mostWork = cloudlet.getRemainingCloudletLength();
+                    cloudletToMigrate = cloudlet;
+                }
+            }
+
+            // Is migration worthwhile?
+            if (largest > 2.0 * smallest && migrationWorthwhile(cloudletToMigrate, mostLoaded, leastLoaded, mean)) {
+
+                migrations.add(new MigrationPair(cloudletToMigrate, mostLoaded, leastLoaded));
+
             }
         }
 
         return migrations;
     }
 
-    private boolean migrationWorthwhile(GuestEntity fromVm, GuestEntity toVm, double meanWork) {
+    private boolean migrationWorthwhile(Cloudlet cloudletToMigrate, GuestEntity fromVm, GuestEntity toVm, double meanWork) {
 
-        double mostWork = 0;
-        for (Cloudlet cloudlet : fromVm.getCloudletScheduler().getCloudletExecList()) {
-            if (cloudlet.getRemainingCloudletLength() > mostWork) {
-                mostWork = cloudlet.getRemainingCloudletLength();
-            }
-        }
+        double work = cloudletToMigrate.getRemainingCloudletLength();
 
-        if (mostWork == 0) {
+        if (work == 0) {
             return false;
         }
 
@@ -65,7 +75,7 @@ public class Planner1 implements Planner<Diagnosis<GuestEntity>, List<MigrationP
         double effectiveMipsFrom = fromVm.getMips() / Math.max(fromCount, 1);
         double effectiveMipsTo = toVm.getMips() / Math.max(toCount + 1, 1);
 
-        double improvement = (mostWork / effectiveMipsFrom) - (mostWork / effectiveMipsTo);
+        double improvement = (work / effectiveMipsFrom) - (work / effectiveMipsTo);
 
         double MINIMUM_IMPROVEMENT = meanWork * 0.05;
 
