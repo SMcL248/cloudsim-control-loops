@@ -14,7 +14,7 @@ import org.cloudbus.cloudsim.core.SimEvent;
 import org.cloudbus.cloudsim.core.HostEntity;
 
 
-public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSpace, ReadSpace {
+public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSpace {
 
     private final Monitor<M> monitor;
     private final Analyser<M,D> analyser;
@@ -131,7 +131,7 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
     }
 
     @Override
-    public Double getNow(){
+    public double getNow(){
         return CloudSim.clock();
     }
 

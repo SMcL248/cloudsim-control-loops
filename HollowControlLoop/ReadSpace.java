@@ -11,6 +11,6 @@ public interface ReadSpace {
     List<GuestEntity> getVmList();
     Integer getUserId();
     List<HostEntity> getAllHosts();
-    Double getNow();
+    double getNow();
     
 }
