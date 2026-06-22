@@ -2,28 +2,23 @@ package org.cloudbus.cloudsim.examples;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
 
-public class Monitor5 implements Monitor<Map<Integer, Map<HostEntity, Map<String, Double>>>>{
+public class Monitor5 implements Monitor<Map<HostEntity, Map<String, Double>>>{
 
     @Override
-    public Map<Integer, Map<HostEntity, Map<String, Double>>> observe(WorldState worldState) {
+    public Map<HostEntity, Map<String, Double>> observe(ReadSpace readSpace) {
 
-        double now = worldState.now();
+        double now = readSpace.getNow();
     
         Log.printlnConcat(now, ": Observing...");
-
-        Map<Integer, Map<HostEntity, Map<String, Double>>> metrics = new HashMap<>();
         
-        for (Integer id: worldState.hosts().keySet()){
+            Map<HostEntity, Map<String, Double>> metrics = new HashMap<>();
 
-            Map<HostEntity, Map<String, Double>> firstMap = new HashMap<>();
-
-            for (HostEntity host : worldState.hosts().get(id)){
+            for (HostEntity host :readSpace.getAllHosts()){
 
                 Map<String, Double> hostMetrics = new HashMap<>();
 
@@ -49,23 +44,19 @@ public class Monitor5 implements Monitor<Map<Integer, Map<HostEntity, Map<String
                 hostMetrics.put("ram_util", utilRam);
                 hostMetrics.put("bw_util", utilBw);
 
-                Log.printlnConcat("Datacenter #", id, "| Host #", host.getId(), "| Utilised CPU ", utilCpu, "| Utilised RAM ", utilRam, "| Utilised bandwidth ", utilBw);
-                firstMap.put(host, hostMetrics);
+                Log.printlnConcat("Host #", host.getId(), "| Utilised CPU ", utilCpu, "| Utilised RAM ", utilRam, "| Utilised bandwidth ", utilBw);
+                metrics.put(host, hostMetrics);
 
             }
-
-            metrics.put(id, firstMap);
-
-        }
 
         return metrics;
 
     }
 
     @Override
-    public Set<String> providedMetrics() {
+    public String outputGuid() {
 
-        return Set.of("cpu_util", "ram_util", "bw_util");
+        return "cpu-ram-bw-util";
 
     }
     

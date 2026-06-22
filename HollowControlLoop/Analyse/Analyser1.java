@@ -2,10 +2,8 @@ package org.cloudbus.cloudsim.examples;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
 public class Analyser1 implements Analyser<Map<GuestEntity, Map<String, Double>>, Diagnosis<GuestEntity>> {
@@ -13,7 +11,8 @@ public class Analyser1 implements Analyser<Map<GuestEntity, Map<String, Double>>
     private static final String METRIC = "etc";
 
     @Override
-    public Diagnosis<GuestEntity> analyse(Map<GuestEntity, Map<String, Double>> metrics) {
+    public Diagnosis<GuestEntity> analyse(Map<GuestEntity, Map<String, Double>> metrics, ReadSpace readSpace) {
+
 
         Map<GuestEntity, Double> values = new HashMap<>();
         for (var entry : metrics.entrySet()) {
@@ -42,11 +41,16 @@ public class Analyser1 implements Analyser<Map<GuestEntity, Map<String, Double>>
             }
         }
 
-        return new Diagnosis<>(classification, values, null);
+        return new Diagnosis<>(classification, values);
     }
 
     @Override
-    public Set<String> requiredMetrics() {
-        return Set.of(METRIC);
+    public String inputGuid() {
+        return METRIC;
+    }
+
+    @Override
+    public String outputGuid() {
+        return "vm-loadstate";
     }
 }

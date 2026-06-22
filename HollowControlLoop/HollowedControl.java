@@ -1,11 +1,6 @@
 package org.cloudbus.cloudsim.examples;
 
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-
-import javax.print.attribute.IntegerSyntax;
 
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.DatacenterBroker;
@@ -19,7 +14,7 @@ import org.cloudbus.cloudsim.core.SimEvent;
 import org.cloudbus.cloudsim.core.HostEntity;
 
 
-public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSpace {
+public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSpace, ReadSpace {
 
     private final Monitor<M> monitor;
     private final Analyser<M,D> analyser;
@@ -112,17 +107,34 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
 
     }
 
-    //Retrieves list of all hosts in this datacenter
-    private Map<Integer, List<HostEntity>> getAllHosts() {
-
-        Map<Integer, List<HostEntity>> hosts = new HashMap<>();
-
-        for (var characteristics : getDatacenterCharacteristicsList().values()) {
-            hosts.put(characteristics.getId(), characteristics.getHostList());
-        }
-
-        return hosts;
+    @Override
+    public List<GuestEntity> getVmList() {
+        return getGuestsCreatedList();
     }
+
+    @Override
+    public Integer getUserId() {
+        return getId();
+    }
+
+    @Override
+    public void requestVmCreation(GuestEntity newVm, int datacenterId) {
+        getGuestList().add(newVm);
+        sendNow(datacenterId, CloudActionTags.VM_CREATE, newVm);
+    }
+
+    @Override
+    public List<HostEntity> getAllHosts() {
+
+        return getDatacenterCharacteristicsList().values().iterator().next().getHostList();    
+
+    }
+
+    @Override
+    public Double getNow(){
+        return CloudSim.clock();
+    }
+
 
     // This method observes the current state of the system, analyzes it, plans migrations if necessary, and executes them.
     private void observeAndAct() {
@@ -132,19 +144,17 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
             return;
         }
 
-        // Take a snapshot of the current state of the system
-        WorldState worldState = new WorldState(getGuestsCreatedList(), getAllHosts(), CloudSim.clock());
-
         // Control loop: monitor, analyze, plan, and execute (MAPE)
-        M metrics = monitor.observe(worldState);
-        D diagnosis = analyser.analyse(metrics);
-        A actions = planner.plan(diagnosis);
+        M metrics = monitor.observe(this);
+        D diagnosis = analyser.analyse(metrics, this);
+        A actions = planner.plan(diagnosis, this);
         boolean success = executor.execute(actions, this);
 
         // Print the results of the control loop
         if (!success) {
             Log.printlnConcat("The system is balanced. No ", executor.actionDescription(), " needed.");
         }
+
         // Schedule the next observation
         schedule(getId(), observationRate, CloudActionTags.VM_BROKER_EVENT);
 

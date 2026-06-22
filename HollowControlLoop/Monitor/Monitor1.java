@@ -2,7 +2,6 @@ package org.cloudbus.cloudsim.examples;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.Log;
@@ -11,15 +10,15 @@ import org.cloudbus.cloudsim.core.GuestEntity;
 public class Monitor1 implements Monitor<Map<GuestEntity, Map<String, Double>>> {
 
     @Override
-    public Map<GuestEntity, Map<String, Double>> observe(WorldState worldState) {
+    public Map<GuestEntity, Map<String, Double>> observe(ReadSpace readSpace) {
 
-        double now = worldState.now();
+        double now = readSpace.getNow();
 
         Log.printlnConcat(now, ": Observing...");
 
         Map<GuestEntity, Map<String, Double>> metrics = new HashMap<>();
 
-        for (GuestEntity vm : worldState.guests()) {
+        for (GuestEntity vm : readSpace.getVmList()) {
             long remainingWork = 0;
             for (Cloudlet cloudlet : vm.getCloudletScheduler().getCloudletExecList()) {
                 remainingWork += cloudlet.getRemainingCloudletLength();
@@ -35,9 +34,9 @@ public class Monitor1 implements Monitor<Map<GuestEntity, Map<String, Double>>> 
     }
 
     @Override
-    public Set<String> providedMetrics() {
+    public String outputGuid() {
 
-        return Set.of("etc");
+        return "etc";
 
     }
 }

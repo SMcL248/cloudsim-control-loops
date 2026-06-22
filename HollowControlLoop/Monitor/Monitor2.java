@@ -2,44 +2,36 @@ package org.cloudbus.cloudsim.examples;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
 
-public class Monitor2 implements Monitor<Map<Integer, Map<HostEntity, Map<String, Double>>>>{
+public class Monitor2 implements Monitor<Map<HostEntity, Map<String, Double>>>{
 
     @Override
-    public Map<Integer, Map<HostEntity, Map<String, Double>>> observe(WorldState worldState) {
+    public Map<HostEntity, Map<String, Double>> observe(ReadSpace readSpace) {
 
-        double now = worldState.now();
+        double now = readSpace.getNow();
 
         Log.printlnConcat(now, ": Observing...");
 
-        Map<Integer, Map<HostEntity, Map<String, Double>>> metrics = new HashMap<>();
-        
-        for (Integer id: worldState.hosts().keySet()){
+        Map<HostEntity, Map<String, Double>> metrics = new HashMap<>();
 
-            Map<HostEntity, Map<String, Double>> first_map = new HashMap<>();
+        for (HostEntity host : readSpace.getAllHosts()){
 
-            for (HostEntity host : worldState.hosts().get(id)){
+            double total = host.getTotalMips();
 
-                double total = host.getTotalMips();
+            double used = 0;
 
-                double used = 0;
-
-                for (GuestEntity vm : host.getGuestList()){
-                    used += vm.getTotalUtilizationOfCpuMips(now); 
-                }
-
-                double util = used/total;
-                Log.printlnConcat("Datacenter #", id, "| Host #", host.getId(), "| Total CPU Utilisation ", util);
-                first_map.put(host, Map.of("cpu_util", util));
-
+            for (GuestEntity vm : host.getGuestList()){
+                used += vm.getTotalUtilizationOfCpuMips(now); 
             }
 
-            metrics.put(id, first_map);
+            double util = used/total;
+
+            Log.printlnConcat( "Host #", host.getId(), "| Total CPU Utilisation ", util);
+            metrics.put(host, Map.of("cpu_util", util));
 
         }
 
@@ -48,10 +40,12 @@ public class Monitor2 implements Monitor<Map<Integer, Map<HostEntity, Map<String
     }
 
     @Override
-    public Set<String> providedMetrics() {
+    public String outputGuid() {
 
-        return Set.of("cpu_util");
+        return "cpu_util";
 
     }
-    
+
 }
+    
+

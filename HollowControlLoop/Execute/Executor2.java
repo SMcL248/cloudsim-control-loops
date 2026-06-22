@@ -2,11 +2,9 @@ package org.cloudbus.cloudsim.examples;
 
 import java.util.List;
 
-import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.util.HistoryStat;
 
 public class Executor2 implements Executor<List<VmMigrationPair>>{
  
@@ -43,6 +41,11 @@ public class Executor2 implements Executor<List<VmMigrationPair>>{
     @Override
     public String actionDescription(){
         return "VM migration";
+    }
+
+    @Override
+    public String inputGuid() {
+        return "host-migration";
     }
 
 }

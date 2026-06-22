@@ -1,6 +1,5 @@
 package org.cloudbus.cloudsim.examples;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.HashSet;
 import java.util.Set;
@@ -9,35 +8,31 @@ import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
 
 
-public class Planner2 implements Planner<Diagnosis<HostEntity>, List<VmMigrationPair>>{
+public class Planner4 implements Planner<LoadState[], int[]>{
 
     @Override
-    public List<VmMigrationPair> plan(Diagnosis<HostEntity> diagnosis, ReadSpace readSpace ){
+    public int[] plan(LoadState[] classification, ReadSpace readSpace){
 
-        List<VmMigrationPair> migrations = new ArrayList<>();
+        int[] migration = new int[]{-1,-1};
+        
         Set<HostEntity> allocatedTargets = new HashSet<>();
-
-        // // Group hosts by datacenter
-        // Map<Integer, List<HostEntity>> hostsByDatacenter = new HashMap<>();
-        // for (var entry : diagnosis.datacenterIds().entrySet()) {
-        //     hostsByDatacenter.computeIfAbsent(entry.getValue(), k -> new ArrayList<>())
-        //                     .add(entry.getKey());
-        // }
 
         List<HostEntity> hosts = readSpace.getAllHosts();
 
+        int i = 0;
         // Iterate by host in datacenter to find overloaded
         for (HostEntity host : hosts){
 
             HostEntity targetHost = null;
-            LoadState state = diagnosis.classification().get(host);
+            LoadState state = classification[i];
 
             if (state == LoadState.OVERLOADED){
 
+                int ii = 0;
                 // Iterate by host in datacenter again to find underloaded match
                 for (HostEntity host2 : hosts){
 
-                    LoadState state2 = diagnosis.classification().get(host2);
+                    LoadState state2 = classification[ii];
 
                     if (state2 == LoadState.UNDERLOADED && !allocatedTargets.contains(host2)){
 
@@ -60,19 +55,24 @@ public class Planner2 implements Planner<Diagnosis<HostEntity>, List<VmMigration
 
                         if (targetHost.isSuitableForGuest(targetVm)){
                             allocatedTargets.add(targetHost);
-                            migrations.add(new VmMigrationPair(targetVm, targetHost));
+                            migration[0] = targetVm.getId();
+                            migration[1] = targetHost.getId();
                             break;
                         }
 
                     }
 
+                    ii++;
+
                 }
 
             }
 
+            i++;
         }
 
-        return migrations;
+        return migration;
+
     }
 
     @Override

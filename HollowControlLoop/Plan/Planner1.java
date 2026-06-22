@@ -9,7 +9,7 @@ import org.cloudbus.cloudsim.core.GuestEntity;
 public class Planner1 implements Planner<Diagnosis<GuestEntity>, List<MigrationPair>> {
 
     @Override
-    public List<MigrationPair> plan(Diagnosis<GuestEntity> diagnosis) {
+    public List<MigrationPair> plan(Diagnosis<GuestEntity> diagnosis, ReadSpace readSpace) {
 
         List<MigrationPair> migrations = new ArrayList<>();
 
@@ -20,6 +20,7 @@ public class Planner1 implements Planner<Diagnosis<GuestEntity>, List<MigrationP
         double smallest = Double.MAX_VALUE;
 
         for (var entry : diagnosis.values().entrySet()) {
+            
             GuestEntity vm = entry.getKey();
             double value = entry.getValue();
             LoadState state = diagnosis.classification().get(vm);
@@ -81,6 +82,16 @@ public class Planner1 implements Planner<Diagnosis<GuestEntity>, List<MigrationP
 
         return improvement > MINIMUM_IMPROVEMENT;
         
+    }
+
+    @Override
+    public String inputGuid() {
+        return "vm-loadstate";
+    }
+
+    @Override
+    public String outputGuid() {
+        return "vm-migration";
     }
 
 }

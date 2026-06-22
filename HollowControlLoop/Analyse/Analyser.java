@@ -1,11 +1,10 @@
 package org.cloudbus.cloudsim.examples;
 
-import java.util.Set;
-
 
 public interface Analyser<M, D> {
 
-    D analyse(M metrics);
-    Set<String> requiredMetrics(); // e.g. {"etc"}
+    D analyse(M metrics, ReadSpace readSpace);
+    String inputGuid(); // e.g. {"etc"}
+    String outputGuid();
     
 }
