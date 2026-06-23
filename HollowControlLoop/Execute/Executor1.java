@@ -31,11 +31,6 @@ public class Executor1 implements Executor<List<MigrationPair>> {
     }
 
     @Override
-    public String actionDescription(){
-        return "cloudlet migration";
-    }
-
-    @Override
     public String inputGuid() {
         return "vm-migration";
     }

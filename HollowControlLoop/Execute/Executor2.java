@@ -39,11 +39,6 @@ public class Executor2 implements Executor<List<VmMigrationPair>>{
     }
 
     @Override
-    public String actionDescription(){
-        return "VM migration";
-    }
-
-    @Override
     public String inputGuid() {
         return "host-migration";
     }

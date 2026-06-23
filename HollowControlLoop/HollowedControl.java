@@ -31,7 +31,10 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
         this.executor = executor;
     }
 
+    ////////////////////// Overridden methods from DatacenterBroker ////////////////////////////
+
     @Override
+    // Recieves tag and directs to corresponding method
 	public void processEvent(SimEvent ev) {
 		CloudSimTags tag = ev.getTag();
         // Resource characteristics request
@@ -54,6 +57,7 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
         } else if (tag == CloudActionTags.END_OF_SIMULATION) {
             shutdownEntity();
 
+            // Initiate MAPE cycle
         } else if (tag == CloudActionTags.VM_BROKER_EVENT) {
             observeAndAct();
         }else {
@@ -75,6 +79,8 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
         super.shutdownEntity();
     }
 
+    /////////////////////////// Contract Methods ////////////////////////////////////
+
     @Override
     // This method returns the datacenter ID for a given VM. It uses the mapping of VMs to datacenters maintained by the broker.
     public Integer getDatacenterFor(GuestEntity vm) {
@@ -83,8 +89,8 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
 
     @Override
     // This method sends a cloudlet to a datacenter with a specified delay. It uses the send() method of the broker.
-    public void sendCloudlet(int datacenterId, double delay, Cloudlet cloudlet) {
-        send(datacenterId, delay, CloudActionTags.CLOUDLET_SUBMIT, cloudlet);
+    public void sendCloudlet(int datacenterId, Cloudlet cloudlet) {
+        sendNow(datacenterId, CloudActionTags.CLOUDLET_SUBMIT, cloudlet);
     }
 
     @Override
@@ -96,47 +102,50 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
         data[2] = fromVm.getId();
         data[3] = toVm.getId();
         data[4] = destDatacenterId;
-        send(getDatacenterFor(fromVm), 0, CloudActionTags.CLOUDLET_MOVE, data);
+        sendNow(getDatacenterFor(fromVm), CloudActionTags.CLOUDLET_MOVE, data);
     }
 
     @Override
+    // Migrate VM to target host
     public void requestVmMigration(GuestEntity vm, HostEntity targetHost){
-
         GuestMapping payload = new GuestMapping(vm, targetHost);
         send(getDatacenterFor(vm), 0, CloudActionTags.VM_MIGRATE, payload);
-
     }
 
     @Override
+    // Retrieve the complete list of VMs
     public List<GuestEntity> getVmList() {
         return getGuestsCreatedList();
     }
 
     @Override
+    // Get the ID of this broker
     public Integer getUserId() {
         return getId();
     }
 
     @Override
+    // Create VM
     public void requestVmCreation(GuestEntity newVm, int datacenterId) {
         getGuestList().add(newVm);
         sendNow(datacenterId, CloudActionTags.VM_CREATE, newVm);
     }
 
     @Override
+    // Retrieve the complete list of all hosts
     public List<HostEntity> getAllHosts() {
-
         return getDatacenterCharacteristicsList().values().iterator().next().getHostList();    
-
     }
 
     @Override
+    // Retreive the current time
     public double getNow(){
         return CloudSim.clock();
     }
 
+    //////////////////////////// MAPE Cycle //////////////////////////////////////////////
 
-    // This method observes the current state of the system, analyzes it, plans migrations if necessary, and executes them.
+    // This method observes the current state of the system, analyzes it, plans actions if necessary, and executes them.
     private void observeAndAct() {
 
         // If there are no cloudlets to process, do nothing
@@ -145,14 +154,14 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
         }
 
         // Control loop: monitor, analyze, plan, and execute (MAPE)
-        M metrics = monitor.observe(this);
-        D diagnosis = analyser.analyse(metrics, this);
-        A actions = planner.plan(diagnosis, this);
-        boolean success = executor.execute(actions, this);
+        M metrics = monitor.observe(this); // this = ReadSpace
+        D diagnosis = analyser.analyse(metrics, this); // this = ReadSpace
+        A actions = planner.plan(diagnosis, this); // this = ReadSpace
+        boolean success = executor.execute(actions, this); // this = ActionSpace
 
         // Print the results of the control loop
         if (!success) {
-            Log.printlnConcat("The system is balanced. No ", executor.actionDescription(), " needed.");
+            Log.printlnConcat(getNow(), ": The system is balanced. No action requried.");
         }
 
         // Schedule the next observation

@@ -50,10 +50,6 @@ public class Executor3 implements Executor<List<CreateVmAction>>{
 
     }
 
-    @Override
-    public String actionDescription(){
-        return "VM Scaling";
-    }
 
     @Override
     public String inputGuid() {

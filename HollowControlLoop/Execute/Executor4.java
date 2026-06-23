@@ -36,11 +36,6 @@ public class Executor4 implements Executor<int[]>{
     }
 
     @Override
-    public String actionDescription(){
-        return "VM migration";
-    }
-
-    @Override
     public String inputGuid() {
         return "host-migration";
     }
