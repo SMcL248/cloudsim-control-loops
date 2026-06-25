@@ -7,14 +7,15 @@ import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
 
 /**
- * Monitor v1 — Host-level CPU utilisation monitor.
+ * Monitor v1 - CPU Utilisation
  *
- * Observes all hosts in the datacenter and returns a double[] where each
- * element i is the fractional CPU utilisation of host i (0.0 – 1.0),
- * computed as the sum of MIPS currently used by resident VMs divided by
- * the host's total MIPS capacity.
+ * Observes the fraction of each host's total MIPS capacity that is currently
+ * in use, computed as (totalMips - availableMips) / totalMips.
  *
- * Output GUID: "host-cpu"
+ * Output: double[] indexed by host position in readSpace.getAllHosts().
+ * Each entry is in [0.0, 1.0], where 1.0 represents full utilisation.
+ *
+ * Output GUID: host-cpu-util
  */
 public class monitor_v1 implements Monitor<double[]> {
 
@@ -22,29 +23,26 @@ public class monitor_v1 implements Monitor<double[]> {
     public double[] observe(ReadSpace readSpace) {
         double now = readSpace.getNow();
         List<HostEntity> hosts = readSpace.getAllHosts();
-        double[] cpuUtilisation = new double[hosts.size()];
+        double[] metrics = new double[hosts.size()];
 
         for (int i = 0; i < hosts.size(); i++) {
             HostEntity host = hosts.get(i);
-            double totalMips = host.getTotalMips();
+            double total = host.getTotalMips();
             double usedMips = 0.0;
-
             for (GuestEntity vm : host.getGuestList()) {
-                usedMips += vm.getTotalUtilizationOfCpuMips(now);
+                usedMips += vm.getTotalUtilizationOfCpuMips(readSpace.getNow());
             }
-
-            cpuUtilisation[i] = (totalMips > 0.0) ? usedMips / totalMips : 0.0;
-
-            Log.printlnConcat(now, ": [Monitor] Host ", i,
-                    " CPU utilisation = ", cpuUtilisation[i],
-                    " (used=", usedMips, " MIPS, total=", totalMips, " MIPS)");
+            double util = (total > 0.0) ? (total - usedMips) / total : 0.0;
+            metrics[i] = util;
+            Log.printlnConcat(now, ": [monitor_v1] Host ", host.getId(),
+                    " CPU util = ", util);
         }
 
-        return cpuUtilisation;
+        return metrics;
     }
 
     @Override
     public String outputGuid() {
-        return "host-cpu";
+        return "host-cpu-util";
     }
 }

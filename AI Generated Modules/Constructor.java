@@ -35,12 +35,12 @@ public class Constructor {
 
     static List<SimulationResult> results = new ArrayList<>();
 
-    static Monitor[] monitorDict = {new monitor_v1()};
-    static Analyser[] analyserDict = {new analyser_v1()};
-    static Planner[] plannerDict = {new planner_v1()};
-    static Executor[] executorDict = {new executor_v1()};
+    static Monitor[] monitorDict = {new monitor_v1(), new monitor_v2(), new monitor_v3()};
+    static Analyser[] analyserDict = {new analyser_v1(), new analyser_v2(), new analyser_v3()};
+    static Planner[] plannerDict = {new planner_v1(), new planner_v2(), new planner_v3()};
+    static Executor[] executorDict = {new executor_v1(), new executor_v2(), new executor_v3()};
 
-    public static void main (String[] args){
+    public static void main (String[] args) throws Exception{
 
         int compatibleCounter = 0;
         int failCounter = 0;
@@ -53,7 +53,12 @@ public class Constructor {
                 for (Planner p : plannerDict){
                     for (Executor e : executorDict){
 
-                        SimulationResult result = runSimulation(m, a, p, e);
+                        Monitor mFresh = m.getClass().getDeclaredConstructor().newInstance();
+                        Analyser aFresh = a.getClass().getDeclaredConstructor().newInstance();
+                        Planner pFresh = p.getClass().getDeclaredConstructor().newInstance();
+                        Executor eFresh = e.getClass().getDeclaredConstructor().newInstance();
+
+                        SimulationResult result = runSimulation(mFresh, aFresh, pFresh, eFresh);
                         results.add(result);
 
                         if (m.outputGuid().equals(a.inputGuid()) && a.outputGuid().equals(p.inputGuid()) && p.outputGuid().equals(e.inputGuid())){
@@ -95,6 +100,9 @@ public class Constructor {
        // Log.println("Starting ManualControllerVmMigrationSimple...");
 
 		try {
+
+            Log.disable();
+
 			// First step: Initialize the CloudSim package. It should be called
 			// before creating any entities.
 			int num_user = 1;   // number of grid users
@@ -113,8 +121,8 @@ public class Constructor {
 			int brokerId = broker.getId();
 
 			//Fourth step: Create VMs and Cloudlets and send them to broker
-			vmlist = createVM(brokerId, 5, 0); //creating 5 vms
-			cloudletList = createCloudlet(brokerId, 40, 0); // creating 10 cloudlets
+			vmlist = createVM(brokerId, 16, 0); //creating 5 vms
+			cloudletList = createCloudlet(brokerId, 60, 0); // creating 10 cloudlets
 
 			broker.submitGuestList(vmlist);
 			broker.submitCloudletList(cloudletList);
@@ -131,14 +139,17 @@ public class Constructor {
 
 		//	Log.println("ManualControllerVmMigrationSimple finished!");
 
-            return new SimulationResult(m.getClass().getSimpleName(), a.getClass().getSimpleName(), p.getClass().getSimpleName(), e.getClass().getSimpleName(),  makespan);
+            Log.enable();
+
+            return new SimulationResult(m.getClass().getSimpleName(), a.getClass().getSimpleName(), p.getClass().getSimpleName(), e.getClass().getSimpleName(), a.getActionableCycles(), e.getActionsExecuted(),  makespan);
 
 		}
 		catch (Exception exception)
 		{
 			exception.printStackTrace();
+            Log.enable();
 			Log.println("The simulation has been terminated due to an unexpected error");
-            return new SimulationResult(m.getClass().getSimpleName(), a.getClass().getSimpleName(), p.getClass().getSimpleName(), e.getClass().getSimpleName(), -1);    
+            return new SimulationResult(m.getClass().getSimpleName(), a.getClass().getSimpleName(), p.getClass().getSimpleName(), e.getClass().getSimpleName(), a.getActionableCycles(), e.getActionsExecuted(), -1);    
 
 		}
 
@@ -245,20 +256,36 @@ public class Constructor {
 
     static void logResult(SimulationResult result) {
 
-        if (result.makespan() != -1){
+        if (result.makespan() != -1 && result.actionableCycles() >0){
             Log.printlnConcat(
-            result.monitorId(), " | ",
-            result.analyserId(), " | ",
-            result.plannerId(), " | ",
-            result.executorId(), " | makespan=",
-            result.makespan()
+            "[",
+            result.monitorId(), " + ",
+            result.analyserId(), " + ",
+            result.plannerId(), " + ",
+            result.executorId(), "] makespan=",
+            Math.round(result.makespan()), "| actionable cycles=",
+            result.actionableCycles(), "| actions executed=",
+            result.actionsExecuted(), "| actionable to action conversion rate=",
+            Math.round((double) result.actionsExecuted()/result.actionableCycles() * 100), "%"
+            );
+        }else if (result.makespan() != -1 ){
+            Log.printlnConcat(
+            "[",
+            result.monitorId(), " + ",
+            result.analyserId(), " + ",
+            result.plannerId(), " + ",
+            result.executorId(), "] makespan=",
+            Math.round(result.makespan()), "| actionable cycles=",
+            result.actionableCycles(), "| actions executed=",
+            result.actionsExecuted()
             );
         }else{
             Log.printlnConcat(
-            result.monitorId(), " | ",
-            result.analyserId(), " | ",
-            result.plannerId(), " | ",
-            result.executorId(), " | FAILED"
+            "[ ",
+            result.monitorId(), " + ",
+            result.analyserId(), " + ",
+            result.plannerId(), " + ",
+            result.executorId(), "] FAILED"
             );
         }
 

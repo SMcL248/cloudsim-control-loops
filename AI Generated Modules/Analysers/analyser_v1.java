@@ -7,50 +7,64 @@ import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
 
 /**
- * Analyser variant 1 — Host-level CPU utilisation classifier.
+ * Analyser v1 — CPU Utilisation, Static Threshold Analysis.
  *
- * Reads a per-host CPU utilisation snapshot (double[] in [0.0, 1.0]) and
- * classifies each host as OVERLOADED, UNDERLOADED, or BALANCED using fixed
- * thresholds.
+ * Input metric : host CPU utilisation in range [0.0, 1.0]  (host-cpu-util)
+ * Output       : LoadState per host                        (host-loadstate)
  *
- * Input  GUID : host-cpu
- * Output GUID : host-loadstate
+ * A host is OVERLOADED  when utilisation exceeds HIGH_THRESHOLD.
+ * A host is UNDERLOADED when utilisation falls below LOW_THRESHOLD.
+ * Otherwise it is BALANCED.
+ *
+ * The actionable-cycle counter increments once per analyse() call in which
+ * at least one host is OVERLOADED or UNDERLOADED.
  */
 public class analyser_v1 implements Analyser<double[], LoadState[]> {
 
-    /** CPU utilisation above this fraction → OVERLOADED */
-    private static final double OVERLOAD_THRESHOLD  = 0.60;
+    private static final double HIGH_THRESHOLD = 0.80;
+    private static final double LOW_THRESHOLD  = 0.20;
 
-    /** CPU utilisation below this fraction → UNDERLOADED */
-    private static final double UNDERLOAD_THRESHOLD = 0.20;
+    private int actionableCycles = 0;
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
         double now = readSpace.getNow();
         LoadState[] states = new LoadState[metrics.length];
+        boolean actionable = false;
 
         for (int i = 0; i < metrics.length; i++) {
-            double cpuUtil = metrics[i];
+            double util = metrics[i];
 
-            if (cpuUtil >= OVERLOAD_THRESHOLD) {
+            if (util > HIGH_THRESHOLD) {
                 states[i] = LoadState.OVERLOADED;
-            } else if (cpuUtil <= UNDERLOAD_THRESHOLD) {
+                actionable = true;
+            } else if (util < LOW_THRESHOLD) {
                 states[i] = LoadState.UNDERLOADED;
+                actionable = true;
             } else {
                 states[i] = LoadState.BALANCED;
             }
 
-            Log.printlnConcat(now, ": [analyser_v1] Host ", i,
-                    " cpu_util=", String.format("%.3f", cpuUtil),
-                    " -> ", states[i]);
+            Log.printlnConcat(now, ": [analyser_v1] Host[", i, "] cpu-util=",
+                              String.format("%.4f", util), " -> ", states[i]);
+        }
+
+        if (actionable) {
+            actionableCycles++;
+            Log.printlnConcat(now, ": [analyser_v1] Actionable cycle detected (total=", actionableCycles, ")");
         }
 
         return states;
     }
 
     @Override
+    public int getActionableCycles() {
+        return actionableCycles;
+    }
+
+    @Override
     public String inputGuid() {
-        return "host-cpu";
+        return "host-cpu-util";
     }
 
     @Override

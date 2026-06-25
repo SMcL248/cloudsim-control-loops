@@ -41,7 +41,7 @@ public class Planner4 implements Planner<LoadState[], int[]>{
                         GuestEntity targetVm = null;
 
                         //Find VM using most MIPS
-                        for (GuestEntity vm : host.getGuestList()){
+                        for (GuestEntity vm : readSpace.getVmList()){
 
                             if (vm.getCurrentRequestedTotalMips() > max_mips){
                                 targetVm = vm;

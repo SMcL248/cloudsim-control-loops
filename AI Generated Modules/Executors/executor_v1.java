@@ -5,68 +5,63 @@ import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
 
 /**
- * Executor variant 1: VM Migration Executor (host level).
+ * executor_v1 - Eager Executor
  *
- * Receives a pair [vmId, hostId] and requests migration of the identified VM
- * to the identified host via the ActionSpace.
- *
- * Sentinel input {-1, -1} signals no migration is needed; returns false.
+ * Strategy: Minimal guards, fast path to migration.
+ * Resolves VM and Host entities by ID, then immediately
+ * submits the migration request. Logs at key decision points only.
  */
 public class executor_v1 implements Executor<int[]> {
 
-    @Override
-    public String inputGuid() {
-        return "host-migration-pair";
-    }
+    private int actionsExecuted = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
         double now = actionSpace.getNow();
 
-        // Sentinel check: no migration requested
-        if (actions == null || actions.length < 2 || (actions[0] == -1 && actions[1] == -1)) {
-            Log.printlnConcat(now, ": [Executor] No migration requested (sentinel received). Skipping.");
+        if (actions[0] == -1 && actions[1] == -1) {
+            Log.printlnConcat(now, ": [Executor_v1] Sentinel received. No migration.");
             return false;
         }
 
         int vmId   = actions[0];
         int hostId = actions[1];
 
-        Log.printlnConcat(now, ": [Executor] Migration request received: VM ", vmId, " -> Host ", hostId);
+        GuestEntity targetVm   = findVm(vmId, actionSpace);
+        HostEntity  targetHost = findHost(hostId, actionSpace);
 
-        // Resolve VM by ID
-        GuestEntity targetVm = null;
-        for (GuestEntity vm : actionSpace.getVmList()) {
-            if (vm.getId() == vmId) {
-                targetVm = vm;
-                break;
-            }
-        }
-
-        if (targetVm == null) {
-            Log.printlnConcat(now, ": [Executor] VM ", vmId, " not found in VM list. Migration aborted.");
+        if (targetVm == null || targetHost == null) {
+            Log.printlnConcat(now, ": [Executor_v1] Entity lookup failed. vmId=", vmId, " hostId=", hostId, ". Migration aborted.");
             return false;
         }
 
-        // Resolve Host by ID
-        HostEntity targetHost = null;
-        for (HostEntity host : actionSpace.getAllHosts()) {
-            if (host.getId() == hostId) {
-                targetHost = host;
-                break;
-            }
-        }
-
-        if (targetHost == null) {
-            Log.printlnConcat(now, ": [Executor] Host ", hostId, " not found in host list. Migration aborted.");
-            return false;
-        }
-
-        // Request migration
-        Log.printlnConcat(now, ": [Executor] Issuing migration: VM ", vmId, " to Host ", hostId);
+        Log.printlnConcat(now, ": [Executor_v1] Migrating VM ", vmId, " -> Host ", hostId);
         actionSpace.requestVmMigration(targetVm, targetHost);
-
-        Log.printlnConcat(now, ": [Executor] Migration request submitted successfully.");
+        actionsExecuted++;
         return true;
+    }
+
+    private GuestEntity findVm(int id, ActionSpace actionSpace) {
+        for (GuestEntity vm : actionSpace.getVmList()) {
+            if (vm.getId() == id) return vm;
+        }
+        return null;
+    }
+
+    private HostEntity findHost(int id, ActionSpace actionSpace) {
+        for (HostEntity host : actionSpace.getAllHosts()) {
+            if (host.getId() == id) return host;
+        }
+        return null;
+    }
+
+    @Override
+    public int getActionsExecuted() {
+        return actionsExecuted;
+    }
+
+    @Override
+    public String inputGuid() {
+        return "host-migration-pair";
     }
 }
