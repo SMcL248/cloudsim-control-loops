@@ -69,6 +69,6 @@ public class analyser_v1 implements Analyser<double[], LoadState[]> {
 
     @Override
     public String outputGuid() {
-        return "host-loadstate";
+        return "host-cpu-util-loadstate";
     }
 }

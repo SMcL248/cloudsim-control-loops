@@ -8,6 +8,7 @@ public record SimulationResult(
     String executorId,
     int actionableCycles,
     int actionsExecuted,
-    double makespan
+    double makespan,
+    boolean compatible
 
 ) {}

@@ -113,6 +113,6 @@ public class analyser_v3 implements Analyser<double[], LoadState[]> {
 
     @Override
     public String outputGuid() {
-        return "host-loadstate";
+        return "host-vm-count-loadstate";
     }
 }

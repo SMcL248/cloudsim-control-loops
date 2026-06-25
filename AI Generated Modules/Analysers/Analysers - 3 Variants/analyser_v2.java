@@ -28,7 +28,7 @@ import org.cloudbus.cloudsim.core.HostEntity;
 public class analyser_v2 implements Analyser<double[], LoadState[]> {
 
     /** Demand ratio at or above which a host is considered overloaded. */
-    private static final double SATURATION_THRESHOLD = 0.90;
+    private static final double SATURATION_THRESHOLD = 0.80;
 
     /** Demand ratio below which a host is considered underloaded. */
     private static final double IDLE_THRESHOLD = 0.15;
@@ -79,6 +79,6 @@ public class analyser_v2 implements Analyser<double[], LoadState[]> {
 
     @Override
     public String outputGuid() {
-        return "host-loadstate";
+        return "host-cpu-demand-loadstate";
     }
 }

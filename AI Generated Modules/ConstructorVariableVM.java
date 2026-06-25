@@ -26,7 +26,7 @@ import org.cloudbus.cloudsim.Vm;
 import org.cloudbus.cloudsim.VmAllocationPolicySimple;
 import org.cloudbus.cloudsim.VmSchedulerTimeShared;
 
-public class Constructor {
+public class ConstructorVariableVM {
 
     public static HollowedControl broker;
 
@@ -41,6 +41,9 @@ public class Constructor {
 
     // CSV writer
     static PrintWriter csvWriter;
+
+    // Possible VM MIPS capacities
+    private static final int[] MIPS_TIERS = {250, 500, 1000};
 
     // Module library
     static Monitor[] monitorDict = {new monitor_v1(), new monitor_v2(), new monitor_v3()};
@@ -239,14 +242,15 @@ public class Constructor {
         return datacenter;
     }
 
-    private static List<Vm> createVM(int userId, int vms, int idShift) {
+	private static List<Vm> createVM(int userId, int vms, int idShift) {
 		//Creates a container to store VMs. This list is passed to the broker later
 		LinkedList<Vm> list = new LinkedList<>();
+
+        Random rng = new Random(42);
 
 		//VM Parameters
 		long size = 10000; //image size (MB)
 		int ram = 512; //vm memory (MB)
-		int mips = 250;
 		long bw = 1000;
 		int pesNumber = 1; //number of cpus
 		String vmm = "Xen"; //VMM name
@@ -255,11 +259,13 @@ public class Constructor {
 		Vm[] vm = new Vm[vms];
 
 		for(int i=0;i<vms;i++){
-			vm[i] = new Vm(idShift + i, userId, mips, pesNumber, ram, bw, size, vmm, new CloudletSchedulerTimeShared());
+			vm[i] = new Vm(idShift + i, userId, MIPS_TIERS[rng.nextInt(MIPS_TIERS.length)], pesNumber, ram, bw, size, vmm, new CloudletSchedulerTimeShared());
 			list.add(vm[i]);
+            Log.println("VM #" + vm[i].getId() + " | MIPS: " + vm[i].getMips());
 		}
 
 		return list;
+
 	}
 
 	private static List<Cloudlet> createCloudlet(int userId, int cloudlets, int idShift){
