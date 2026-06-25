@@ -28,6 +28,7 @@ public class Monitor1 implements Monitor<Map<GuestEntity, Map<String, Double>>> 
             int numCloudlets = vm.getCloudletScheduler().getCloudletExecList().size();
             Log.printlnConcat(now, ": VM #", vm.getId(), "| MIPS: ", vm.getMips(), "| Outstanding Work: ", remainingWork, " | Current ETC: ", currentETC, " | Number of Cloudlets: ", numCloudlets);
             metrics.put(vm, Map.of("etc", currentETC));
+
         }
 
         return metrics;
