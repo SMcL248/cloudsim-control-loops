@@ -7,8 +7,10 @@ public record SimulationResult(
     String plannerId,
     String executorId,
     int actionableCycles,
+    int opportunityCycles,
     int actionsExecuted,
     double makespan,
-    boolean compatible
+    boolean compatible,
+    double groundTruthAvgVariance
 
 ) {}

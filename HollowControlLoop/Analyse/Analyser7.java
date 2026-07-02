@@ -11,7 +11,6 @@ public class Analyser7 implements Analyser< Map<HostEntity, Map<String, Double>>
 
     private static final double UPPER_THRESHOLD = 0.8;
     private static final double LOWER_THRESHOLD = 0.2;
-    private int actionableCycles = 0;
 
     @Override
     public Diagnosis<HostEntity> analyse(Map<HostEntity, Map<String, Double>> metrics, ReadSpace readSpace) {  
@@ -52,10 +51,6 @@ public class Analyser7 implements Analyser< Map<HostEntity, Map<String, Double>>
 
         }
 
-        if (classification.containsValue(LoadState.OVERLOADED)){
-            actionableCycles++;
-        }
-
 
         return new Diagnosis<>(classification, costScores);
 
@@ -69,11 +64,6 @@ public class Analyser7 implements Analyser< Map<HostEntity, Map<String, Double>>
     @Override
     public String outputGuid() {
         return "host-loadstate";
-    }
-
-    @Override
-    public int getActionableCycles() {
-        return actionableCycles;
     }
     
 }

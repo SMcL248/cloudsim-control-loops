@@ -1,6 +1,7 @@
 package org.cloudbus.cloudsim.examples;
 
 import java.util.List;
+import java.util.function.Predicate; 
 
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.DatacenterBroker;
@@ -22,13 +23,36 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
     private final Executor<A> executor;
     private final int observationRate;
 
-    public HollowedControl(String name, int observationRate, Monitor<M> monitor, Analyser<M,D> analyser, Planner<D,A> planner, Executor<A> executor) throws Exception {
+    // Injected at construction, defined where D is concretely known (ConstructorVariableVM).
+    // HollowedControl itself never sees LoadState[] — it only ever sees D.
+    private final Predicate<D> imbalancePredicate;   // "at least one OVERLOADED or UNDERLOADED"
+    private final Predicate<D> opportunityPredicate; // "at least one OVERLOADED AND one UNDERLOADED"
+
+    // Metrics we are attempting to optimize.
+    private double groundTruthVarianceSum = 0.0;
+    private int groundTruthCycleCount = 0;
+
+    private int imbalanceCycles = 0;  // number of times any imbalance is detected
+    private int opportunityCycles = 0; // number of times an action oppertunity is detected
+    private int actionsExecuted = 0; // number of times an action is taken
+
+    // Backward-compatible overload: instrumentation is opt-in, defaults to "never true"
+    public HollowedControl(String name, int observationRate, Monitor<M> monitor, Analyser<M,D> analyser,
+                            Planner<D,A> planner, Executor<A> executor) throws Exception {
+        this(name, observationRate, monitor, analyser, planner, executor, null, null);
+    }
+
+    public HollowedControl(String name, int observationRate, Monitor<M> monitor, Analyser<M,D> analyser, 
+        Planner<D,A> planner, Executor<A> executor, Predicate<D> imbalancePredicate, Predicate<D> opportunityPredicate) 
+        throws Exception {
         super(name);
         this.observationRate = observationRate;
         this.monitor = monitor;
         this.analyser = analyser;
         this.planner = planner;
         this.executor = executor;
+        this.imbalancePredicate = (imbalancePredicate != null) ? imbalancePredicate : d -> false;
+        this.opportunityPredicate = (opportunityPredicate != null) ? opportunityPredicate : d -> false;
     }
 
     ////////////////////// Overridden methods from DatacenterBroker ////////////////////////////
@@ -148,28 +172,72 @@ public class HollowedControl<M,D,A> extends DatacenterBroker implements ActionSp
     // This method observes the current state of the system, analyzes it, plans actions if necessary, and executes them.
     private void observeAndAct() {
 
-        // If there are no cloudlets to process, do nothing
         if (getCloudletList().isEmpty() && getCloudletSubmittedList().size() == getCloudletReceivedList().size()) {
             return;
         }
 
-        // Control loop: monitor, analyze, plan, and execute (MAPE)
-        M metrics = monitor.observe(this); // this = ReadSpace
-        D diagnosis = analyser.analyse(metrics, this); // this = ReadSpace
-        A actions = planner.plan(diagnosis, this); // this = ReadSpace
-        boolean success = executor.execute(actions, this); // this = ActionSpace
+        updateGroundTruth();
 
-        // Print the results of the control loop
-        if (!success) {
-            Log.printlnConcat(getNow(), ": The system is balanced. No action requried.");
+        M metrics = monitor.observe(this);
+        D diagnosis = analyser.analyse(metrics, this);
+
+        // Both counters are pure functions of D, evaluated here at the controller,
+        // not self-reported by the analyser implementation.
+        if (imbalancePredicate.test(diagnosis))   imbalanceCycles++;
+        if (opportunityPredicate.test(diagnosis)) opportunityCycles++;
+
+        A actions = planner.plan(diagnosis, this);
+        boolean success = executor.execute(actions, this);
+
+        // success already IS "non-sentinel action executed" — no generic inspection of A needed.
+        if (success) {
+            actionsExecuted++;
+        } else {
+            Log.printlnConcat(getNow(), ": The system is balanced. No action required.");
         }
 
-        // Schedule the next observation
         schedule(getId(), observationRate, CloudActionTags.VM_BROKER_EVENT);
+    }
+
+    public int getImbalanceCycles()   { return imbalanceCycles; }
+    public int getOpportunityCycles() { return opportunityCycles; }
+    public int getActionsExecuted()   { return actionsExecuted; }
+
+
+    public double getGroundTruthAvgVariance() {
+        return groundTruthCycleCount == 0 ? 0.0 : groundTruthVarianceSum / groundTruthCycleCount;
+    }
+
+    // Ground truth measurement — runs every cycle, independent of pipeline
+    private void updateGroundTruth(){
+
+        List<HostEntity> hosts = getAllHosts();
+        double[] demands = new double[hosts.size()];
+        double mean = 0.0;
+
+        for (int i = 0; i < hosts.size(); i++) {
+            double usedMips = 0;
+            for (GuestEntity vm : hosts.get(i).getGuestList()) {
+                usedMips += vm.getCurrentRequestedTotalMips();
+            }
+            demands[i] = usedMips / hosts.get(i).getTotalMips();
+            mean += demands[i];
+        }
+
+        mean /= hosts.size();
+        double variance = 0.0;
+
+        for (double d : demands) {
+            variance += (d - mean) * (d - mean);
+        }
+
+        groundTruthVarianceSum += variance / hosts.size();
+        groundTruthCycleCount++;
 
     }
         
 }
+
 
     
 

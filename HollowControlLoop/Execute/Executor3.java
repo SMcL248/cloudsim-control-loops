@@ -7,8 +7,6 @@ import org.cloudbus.cloudsim.Vm;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
 public class Executor3 implements Executor<List<CreateVmAction>>{
-
-    private int actionsExecuted = 0;
  
     @Override
     public boolean execute(List<CreateVmAction> scalingActions, ActionSpace actionSpace){
@@ -41,7 +39,6 @@ public class Executor3 implements Executor<List<CreateVmAction>>{
             }
 
             GuestEntity newVM = new Vm(largestId + 1, actionSpace.getUserId(), mips, pesNumber, ram, bw, size, vmm, new CloudletSchedulerTimeShared());
-            actionsExecuted++;
             actionSpace.requestVmCreation(newVM, id);
             atLeastOneScale = true;
 
@@ -55,11 +52,6 @@ public class Executor3 implements Executor<List<CreateVmAction>>{
     @Override
     public String inputGuid() {
         return "host-scaleup";
-    }
-
-    @Override
-    public int getActionsExecuted() {
-        return actionsExecuted;
     }
 
 }

@@ -165,13 +165,14 @@ public class Constructor {
 
             Log.enable();
 
-            return new SimulationResult(m.getClass().getSimpleName(), 
-                a.getClass().getSimpleName(), 
-                p.getClass().getSimpleName(), 
-                e.getClass().getSimpleName(), 
-                a.getActionableCycles(), 
-                e.getActionsExecuted(),  
-                makespan, compatible);
+            return new SimulationResult(m.getClass().getSimpleName(),
+                a.getClass().getSimpleName(),
+                p.getClass().getSimpleName(),
+                e.getClass().getSimpleName(),
+                broker.getImbalanceCycles(),
+                broker.getOpportunityCycles(),
+                broker.getActionsExecuted(),
+                makespan, compatible, broker.getGroundTruthAvgVariance());
 
 		}
 		catch (Exception exception)
@@ -179,13 +180,14 @@ public class Constructor {
 			exception.printStackTrace();
             Log.enable();
 			Log.println("The simulation has been terminated due to an unexpected error");
-            return new SimulationResult(m.getClass().getSimpleName(), 
-                a.getClass().getSimpleName(), 
-                p.getClass().getSimpleName(), 
-                e.getClass().getSimpleName(), 
-                a.getActionableCycles(), 
-                e.getActionsExecuted(), 
-                -1, compatible);    
+            return new SimulationResult(m.getClass().getSimpleName(),
+                a.getClass().getSimpleName(),
+                p.getClass().getSimpleName(),
+                e.getClass().getSimpleName(),
+                broker.getImbalanceCycles(),
+                broker.getOpportunityCycles(),
+                broker.getActionsExecuted(),
+                -1, compatible, broker.getGroundTruthAvgVariance());    
 
 		}
 

@@ -28,7 +28,7 @@ import org.cloudbus.cloudsim.Storage;
 import org.cloudbus.cloudsim.UtilizationModel;
 import org.cloudbus.cloudsim.UtilizationModelFull;
 import org.cloudbus.cloudsim.Vm;
-import org.cloudbus.cloudsim.VmAllocationPolicySimple;
+import org.cloudbus.cloudsim.VmAllocationPolicySimpler;
 import org.cloudbus.cloudsim.VmSchedulerTimeShared;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.provisioners.BwProvisionerSimple;
@@ -41,7 +41,7 @@ import org.cloudbus.cloudsim.provisioners.RamProvisionerSimple;
  * dynamically.
  */
 public class ManualControllerVmMigrationSimpleCompare {
-    public static DatacenterBroker broker;
+    public static MeasuringBroker measuringBroker;
 
 
 	/** The cloudlet list. */
@@ -50,14 +50,18 @@ public class ManualControllerVmMigrationSimpleCompare {
 	/** The vmlist. */
 	private static List<Vm> vmlist;
 
+	// Possible VM MIPS capacities
+    private static final int[] MIPS_TIERS = {2000, 500, 1000};
+
 	private static List<Vm> createVM(int userId, int vms, int idShift) {
 		//Creates a container to store VMs. This list is passed to the broker later
 		LinkedList<Vm> list = new LinkedList<>();
 
+        Random rng = new Random(42);
+
 		//VM Parameters
 		long size = 10000; //image size (MB)
 		int ram = 512; //vm memory (MB)
-		int mips = 250;
 		long bw = 1000;
 		int pesNumber = 1; //number of cpus
 		String vmm = "Xen"; //VMM name
@@ -66,13 +70,14 @@ public class ManualControllerVmMigrationSimpleCompare {
 		Vm[] vm = new Vm[vms];
 
 		for(int i=0;i<vms;i++){
-			vm[i] = new Vm(idShift + i, userId, mips, pesNumber, ram, bw, size, vmm, new CloudletSchedulerTimeShared());
+			vm[i] = new Vm(idShift + i, userId, MIPS_TIERS[rng.nextInt(MIPS_TIERS.length)], pesNumber, ram, bw, size, vmm, new CloudletSchedulerTimeShared());
 			list.add(vm[i]);
+            Log.println("VM #" + vm[i].getId() + " | MIPS: " + vm[i].getMips());
 		}
 
 		return list;
-	}
 
+	}
 
 	private static List<Cloudlet> createCloudlet(int userId, int cloudlets, int idShift){
 		// Creates a container to store Cloudlets
@@ -82,7 +87,7 @@ public class ManualControllerVmMigrationSimpleCompare {
 
 		//cloudlet parameters
 		long minLength = 10000;
-        long maxLength = 100000;
+        long maxLength = 500000;
 		long fileSize = 300;
 		long outputSize = 300;
 		int pesNumber = 1;
@@ -99,7 +104,6 @@ public class ManualControllerVmMigrationSimpleCompare {
 
 		return list;
 	}
-
 
 	////////////////////////// STATIC METHODS ///////////////////////
 
@@ -121,26 +125,28 @@ public class ManualControllerVmMigrationSimpleCompare {
 
 			// Second step: Create Datacenters
 			//Datacenters are the resource providers in CloudSim. We need at list one of them to run a CloudSim simulation
-			Datacenter datacenter0 = createDatacenter("Datacenter_0", 4, 4);
+			Datacenter datacenter0 = createDatacenter("Datacenter_0", 6, 4);
 
 			//Third step: Create Broker
-			broker = new DatacenterBroker("broker_0");
-			int brokerId = broker.getId();
+			measuringBroker = new MeasuringBroker("broker_0");
+			int brokerId = measuringBroker.getId();
 
 			//Fourth step: Create VMs and Cloudlets and send them to broker
-			vmlist = createVM(brokerId, 5, 0); //creating 5 vms
-			cloudletList = createCloudlet(brokerId, 40, 0); // creating 10 cloudlets
+			vmlist = createVM(brokerId, 12, 0); //creating 5 vms
+			cloudletList = createCloudlet(brokerId, 60, 0); // creating 10 cloudlets
 
-			broker.submitGuestList(vmlist);
-			broker.submitCloudletList(cloudletList);
+			measuringBroker.submitGuestList(vmlist);
+			measuringBroker.submitCloudletList(cloudletList);
 
 			// Fifth step: Starts the simulation
 			CloudSim.startSimulation();
 
 			// Final step: Print results when simulation is over
-			List<Cloudlet> newList = broker.getCloudletReceivedList();
+			List<Cloudlet> newList = measuringBroker.getCloudletReceivedList();
 
 			CloudSim.stopSimulation();
+
+			Log.println("Baseline avg variance (no controller): " + measuringBroker.getAvgVariance());
 
 			printCloudletList(newList);
 
@@ -193,7 +199,7 @@ public class ManualControllerVmMigrationSimpleCompare {
 
         Datacenter datacenter = null;
         try {
-            datacenter = new Datacenter(name, characteristics, new VmAllocationPolicySimple(hostList), new LinkedList<>(), 0);
+            datacenter = new Datacenter(name, characteristics, new VmAllocationPolicySimpler(hostList), new LinkedList<>(), 0);
         } catch (Exception e) {
             e.printStackTrace();
         }

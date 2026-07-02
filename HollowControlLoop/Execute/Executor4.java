@@ -7,8 +7,6 @@ import org.cloudbus.cloudsim.lists.HostList;
 import org.cloudbus.cloudsim.lists.VmList;
 
 public class Executor4 implements Executor<int[]>{
-
-    private int actionsExecuted = 0;
  
     @Override
     public boolean execute(int[] migration, ActionSpace actionSpace){
@@ -28,7 +26,6 @@ public class Executor4 implements Executor<int[]>{
         if (datacenterId == null) {
             Log.printlnConcat(now, ": Cannot migrate VM #", vm.getId(), ": datacenter not found.");
         }else{
-            actionsExecuted++;
             actionSpace.requestVmMigration(vm, targetHost);
             Log.printlnConcat(now, ": Requested migration of VM #", vm.getId(), " to Host #", targetHost.getId());
             atLeastOneMigration = true;
@@ -43,8 +40,4 @@ public class Executor4 implements Executor<int[]>{
         return "host-migration";
     }
 
-    @Override
-    public int getActionsExecuted() {
-        return actionsExecuted;
-    }
 }

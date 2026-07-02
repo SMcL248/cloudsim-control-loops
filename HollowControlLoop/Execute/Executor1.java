@@ -8,15 +8,12 @@ import org.cloudbus.cloudsim.core.GuestEntity;
 
 public class Executor1 implements Executor<List<MigrationPair>> {
 
-    private int actionsExecuted = 0;
-
     @Override
     public boolean execute(List<MigrationPair> migrations, ActionSpace actionSpace) {
         boolean any = false;
         for (MigrationPair p : migrations) {
             migrateCloudlet(p.targetCloudlet(), p.fromVm(), p.targetVm(), actionSpace);
             any = true;
-            actionsExecuted++;
         }
         return any;
     }
@@ -38,9 +35,5 @@ public class Executor1 implements Executor<List<MigrationPair>> {
         return "vm-migration";
     }
 
-    @Override
-    public int getActionsExecuted() {
-        return actionsExecuted;
-    }
 
 }

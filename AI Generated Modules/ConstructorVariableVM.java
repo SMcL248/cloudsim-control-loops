@@ -23,56 +23,50 @@ import org.cloudbus.cloudsim.Pe;
 import org.cloudbus.cloudsim.UtilizationModel;
 import org.cloudbus.cloudsim.UtilizationModelFull;
 import org.cloudbus.cloudsim.Vm;
-import org.cloudbus.cloudsim.VmAllocationPolicySimple;
+import org.cloudbus.cloudsim.VmAllocationPolicySimpler;
 import org.cloudbus.cloudsim.VmSchedulerTimeShared;
 
 public class ConstructorVariableVM {
 
-    public static HollowedControl broker;
+    public static HollowedControl<double[], LoadState[], int[]> broker;
 
-    /** The cloudlet list. */
-	private static List<Cloudlet> cloudletList;
+    private static List<Cloudlet> cloudletList;
+    private static List<Vm> vmlist;
 
-	/** The vmlist. */
-	private static List<Vm> vmlist;
-
-    // List of results
     static List<SimulationResult> results = new ArrayList<>();
-
-    // CSV writer
     static PrintWriter csvWriter;
 
-    // Possible VM MIPS capacities
-    private static final int[] MIPS_TIERS = {250, 500, 1000};
+    private static final int[] MIPS_TIERS = {2000, 500, 1000};
 
-    // Module library
-    static Monitor[] monitorDict = {new monitor_v1(), new monitor_v2(), new monitor_v3()};
-    static Analyser[] analyserDict = {new analyser_v1(), new analyser_v2(), new analyser_v3()};
-    static Planner[] plannerDict = {new planner_v1(), new planner_v2(), new planner_v3()};
+    // Kept raw: these registries only ever get .getClass()'d, so there's nothing
+    // to gain from fighting Java's "generic array creation" restriction here.
+    static Monitor[] monitorDict = {new monitor_v1(), new monitor_v2(), new monitor_v3(), new monitor_v4(), new monitor_v5()};
+    static Analyser[] analyserDict = {new analyser_v1(), new analyser_v2(), new analyser_v3(), new analyser_v4(), new analyser_v5()};
+    static Planner[] plannerDict = {new planner_v1(), new planner_v2(), new planner_v3(), new planner_v4(), new planner_v5()};
     static Executor[] executorDict = {new executor_v1(), new executor_v2(), new executor_v3()};
 
     public static void main (String[] args) throws Exception{
 
-        int compatibleCounter = 0;// # of compatible controllers
-        int failCounter = 0;// # of failures
-        int compatibleAndFailCounter = 0;// # of compatible controllers who failed
-        int notCompatibleAndSucceededCounter = 0;// # of non-compatible controllers that succeeded
-        int numCombinations = monitorDict.length * analyserDict.length * plannerDict.length * executorDict.length;// total # of combinations
+        int compatibleCounter = 0;
+        int failCounter = 0;
+        int compatibleAndFailCounter = 0;
+        int notCompatibleAndSucceededCounter = 0;
+        int numCombinations = monitorDict.length * analyserDict.length * plannerDict.length * executorDict.length;
 
         initCsv();
 
-        // Loop through every possible controller
         for (Monitor m : monitorDict){
             for (Analyser a : analyserDict) {
                 for (Planner p : plannerDict){
                     for (Executor e : executorDict){
 
-                        Monitor mFresh = m.getClass().getDeclaredConstructor().newInstance();
-                        Analyser aFresh = a.getClass().getDeclaredConstructor().newInstance();
-                        Planner pFresh = p.getClass().getDeclaredConstructor().newInstance();
-                        Executor eFresh = e.getClass().getDeclaredConstructor().newInstance();
+                        // Single chokepoint for the unchecked cast — see instantiate() below.
+                        // Target-typing on the LHS infers T = Monitor<double[]> etc. at each call.
+                        Monitor<double[]> mFresh = instantiate(m.getClass());
+                        Analyser<double[], LoadState[]> aFresh = instantiate(a.getClass());
+                        Planner<LoadState[], int[]> pFresh = instantiate(p.getClass());
+                        Executor<int[]> eFresh = instantiate(e.getClass());
 
-                        // Run Simulation & document results
                         SimulationResult result = runSimulation(mFresh, aFresh, pFresh, eFresh);
                         results.add(result);
 
@@ -84,12 +78,12 @@ public class ConstructorVariableVM {
                             failCounter++;
                         }
 
-                        if (result.compatible() && 
+                        if (result.compatible() &&
                             result.makespan() == -1){
                             compatibleAndFailCounter++;
                         }
 
-                        if (!(result.compatible()) && 
+                        if (!(result.compatible()) &&
                             result.makespan() != -1){
                             notCompatibleAndSucceededCounter++;
                         }
@@ -98,14 +92,12 @@ public class ConstructorVariableVM {
             }
         }
 
-        // Print simulation results for each controller
         for (SimulationResult r : results){
                 logResult(r);
         }
 
         csvWriter.close();
 
-        // Print statistics
         Log.printlnConcat((double) compatibleCounter/(numCombinations) * 100, "% of combinations are semantically compatible.");
         Log.printlnConcat((double) failCounter/(numCombinations) * 100, "% of combinations could not be deployed.");
         if (compatibleCounter > 0) {
@@ -117,49 +109,58 @@ public class ConstructorVariableVM {
 
     }
 
-    static void initCsv() throws IOException {
-        csvWriter = new PrintWriter(new FileWriter("simulation_results.csv"));
-        csvWriter.println("compatible,monitor,analyser,planner,executor,makespan,actionable_cycles,actions_executed,conversion_rate,status");
+    // The one place in the file that asserts "reflection + registry membership
+    // is sufficient proof of type" — narrowly scoped, nothing else hides behind it.
+    @SuppressWarnings("unchecked")
+    private static <T> T instantiate(Class<?> clazz) throws Exception {
+        return (T) clazz.getDeclaredConstructor().newInstance();
     }
 
-    static SimulationResult runSimulation(Monitor m, Analyser a, Planner p, Executor e) {
+    static void initCsv() throws IOException {
+        csvWriter = new PrintWriter(new FileWriter("simulation_results.csv"));
+        csvWriter.println("compatible,monitor,analyser,planner,executor,makespan,average_cpu_demand_variance,actionable_cycles,opportunity_cycles,actions_executed,conversion_rate,status");
+    }
 
-        boolean compatible = m.outputGuid().equals(a.inputGuid()) && 
-            a.outputGuid().equals(p.inputGuid()) && 
+    static SimulationResult runSimulation(Monitor<double[]> m, Analyser<double[], LoadState[]> a,
+                                          Planner<LoadState[], int[]> p, Executor<int[]> e) {
+
+        boolean compatible = m.outputGuid().equals(a.inputGuid()) &&
+            a.outputGuid().equals(p.inputGuid()) &&
             p.outputGuid().equals(e.inputGuid());
 
 		try {
 
             Log.disable();
 
-			// First step: Initialize the CloudSim package. It should be called
-			// before creating any entities.
-			int num_user = 1;   // number of grid users
+			int num_user = 1;
 			Calendar calendar = Calendar.getInstance();
-			boolean trace_flag = false;  // mean trace events
+			boolean trace_flag = false;
 
-			// Initialize the CloudSim library
 			CloudSim.init(num_user, calendar, trace_flag);
 
-			// Second step: Create Datacenters
-			//Datacenters are the resource providers in CloudSim. We need at list one of them to run a CloudSim simulation
-			Datacenter datacenter0 = createDatacenter("Datacenter_0", 4, 4);
+			Datacenter datacenter0 = createDatacenter("Datacenter_0", 6, 4);
 
-			//Third step: Create Broker
-			broker = new HollowedControl("Broker_0", 100, m, a, p, e);
+			broker = new HollowedControl<>(
+                "broker_0",
+                100,
+                m,
+                a,
+                p,
+                e,
+                diagnosis -> hasAny(diagnosis, LoadState.OVERLOADED) || hasAny(diagnosis, LoadState.UNDERLOADED),
+                diagnosis -> hasAny(diagnosis, LoadState.OVERLOADED) && hasAny(diagnosis, LoadState.UNDERLOADED)
+            );
+
 			int brokerId = broker.getId();
 
-			//Fourth step: Create VMs and Cloudlets and send them to broker
-			vmlist = createVM(brokerId, 16, 0); //creating 5 vms
-			cloudletList = createCloudlet(brokerId, 60, 0); // creating 10 cloudlets
+			vmlist = createVM(brokerId, 12, 0);
+			cloudletList = createCloudlet(brokerId, 60, 0);
 
 			broker.submitGuestList(vmlist);
 			broker.submitCloudletList(cloudletList);
 
-			// Fifth step: Starts the simulation
 			CloudSim.startSimulation();
 
-			// Final step: Print results when simulation is over
 			List<Cloudlet> newList = broker.getCloudletReceivedList();
 
             double makespan = newList.stream().mapToDouble(Cloudlet::getExecFinishTime).max().orElse(-1);
@@ -168,13 +169,14 @@ public class ConstructorVariableVM {
 
             Log.enable();
 
-            return new SimulationResult(m.getClass().getSimpleName(), 
-                a.getClass().getSimpleName(), 
-                p.getClass().getSimpleName(), 
-                e.getClass().getSimpleName(), 
-                a.getActionableCycles(), 
-                e.getActionsExecuted(),  
-                makespan, compatible);
+            return new SimulationResult(m.getClass().getSimpleName(),
+                a.getClass().getSimpleName(),
+                p.getClass().getSimpleName(),
+                e.getClass().getSimpleName(),
+                broker.getImbalanceCycles(),
+                broker.getOpportunityCycles(),
+                broker.getActionsExecuted(),
+                makespan, compatible, broker.getGroundTruthAvgVariance());
 
 		}
 		catch (Exception exception)
@@ -182,13 +184,18 @@ public class ConstructorVariableVM {
 			exception.printStackTrace();
             Log.enable();
 			Log.println("The simulation has been terminated due to an unexpected error");
-            return new SimulationResult(m.getClass().getSimpleName(), 
-                a.getClass().getSimpleName(), 
-                p.getClass().getSimpleName(), 
-                e.getClass().getSimpleName(), 
-                a.getActionableCycles(), 
-                e.getActionsExecuted(), 
-                -1, compatible);    
+            // NOTE (pre-existing, not introduced by this change): `broker` is a shared static
+            // field. If the exception happened before `broker = new HollowedControl<>(...)`
+            // completed this run, these getters report the PREVIOUS run's leftover object,
+            // not this one. Worth a null-guard if FAILED rows ever need to be trusted.
+            return new SimulationResult(m.getClass().getSimpleName(),
+                a.getClass().getSimpleName(),
+                p.getClass().getSimpleName(),
+                e.getClass().getSimpleName(),
+                broker.getImbalanceCycles(),
+                broker.getOpportunityCycles(),
+                broker.getActionsExecuted(),
+                -1, compatible, broker.getGroundTruthAvgVariance());
 
 		}
 
@@ -234,7 +241,7 @@ public class ConstructorVariableVM {
 
         Datacenter datacenter = null;
         try {
-            datacenter = new Datacenter(name, characteristics, new VmAllocationPolicySimple(hostList), new LinkedList<>(), 0);
+            datacenter = new Datacenter(name, characteristics, new VmAllocationPolicySimpler(hostList), new LinkedList<>(), 0);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -243,19 +250,16 @@ public class ConstructorVariableVM {
     }
 
 	private static List<Vm> createVM(int userId, int vms, int idShift) {
-		//Creates a container to store VMs. This list is passed to the broker later
 		LinkedList<Vm> list = new LinkedList<>();
 
         Random rng = new Random(42);
 
-		//VM Parameters
-		long size = 10000; //image size (MB)
-		int ram = 512; //vm memory (MB)
+		long size = 10000;
+		int ram = 512;
 		long bw = 1000;
-		int pesNumber = 1; //number of cpus
-		String vmm = "Xen"; //VMM name
+		int pesNumber = 1;
+		String vmm = "Xen";
 
-		//create VMs
 		Vm[] vm = new Vm[vms];
 
 		for(int i=0;i<vms;i++){
@@ -269,14 +273,12 @@ public class ConstructorVariableVM {
 	}
 
 	private static List<Cloudlet> createCloudlet(int userId, int cloudlets, int idShift){
-		// Creates a container to store Cloudlets
 		LinkedList<Cloudlet> list = new LinkedList<>();
 
-        Random random = new Random(42); // fixed seed
+        Random random = new Random(42);
 
-		//cloudlet parameters
 		long minLength = 10000;
-        long maxLength = 100000;
+        long maxLength = 500000;
 		long fileSize = 300;
 		long outputSize = 300;
 		int pesNumber = 1;
@@ -286,7 +288,6 @@ public class ConstructorVariableVM {
 
 		for(int i=0;i<cloudlets;i++){
 			cloudlet[i] = new Cloudlet(idShift + i, (long)(minLength + random.nextDouble() * (maxLength - minLength)), pesNumber, fileSize, outputSize, utilizationModel, utilizationModel, utilizationModel);
-			// setting the owner of these Cloudlets
 			cloudlet[i].setUserId(userId);
 			list.add(cloudlet[i]);
 		}
@@ -294,17 +295,19 @@ public class ConstructorVariableVM {
 		return list;
 	}
 
+    private static boolean hasAny(LoadState[] arr, LoadState target) {
+        for (LoadState s : arr) if (s == target) return true;
+        return false;
+    }
 
-    // log results
     static void logResult(SimulationResult result) {
 
         boolean failed = result.makespan() == -1;
         boolean inert  = !failed && result.actionableCycles() == 0;
-        int conversionRate = (!failed && result.actionableCycles() > 0)
-                ? (int) Math.round((double) result.actionsExecuted() / result.actionableCycles() * 100)
+        double conversionRate = (!failed && result.actionableCycles() > 0)
+                ? (double) result.actionsExecuted() / result.actionableCycles()
                 : -1;
 
-        // --- console ---
         if (failed) {
             Log.printlnConcat(
                     "Compatible: ", result.compatible(), " [",
@@ -317,7 +320,8 @@ public class ConstructorVariableVM {
                     result.monitorId(), " + ", result.analyserId(), " + ",
                     result.plannerId(), " + ", result.executorId(), "] makespan=",
                     Math.round(result.makespan()), "| actionable cycles=",
-                    result.actionableCycles(), "| actions executed=",
+                    result.actionableCycles(), "| opportunity cycles=",
+                    result.opportunityCycles(), "| actions executed=",
                     result.actionsExecuted());
 
         } else {
@@ -326,27 +330,30 @@ public class ConstructorVariableVM {
                     result.monitorId(), " + ", result.analyserId(), " + ",
                     result.plannerId(), " + ", result.executorId(), "] makespan=",
                     Math.round(result.makespan()), "| actionable cycles=",
-                    result.actionableCycles(), "| actions executed=",
+                    result.actionableCycles(), "| opportunity cycles=",
+                    result.opportunityCycles(), "| actions executed=",
                     result.actionsExecuted(), "| conversion rate=",
-                    conversionRate, "%");
+                    conversionRate);
         }
 
-        // --- csv ---
         String status = failed ? "FAILED" : inert ? "INERT" : "ACTIVE";
-        String conversionRateCell = (conversionRate >= 0) ? String.valueOf(conversionRate) : "";
-        String makespanCell = failed ? "" : String.valueOf(Math.round(result.makespan()));
+        double conversionRateCell = (conversionRate >= 0) ? conversionRate : 0;
+        double makespanCell = failed ? 0 : result.makespan();
+        double groundTruthCell = failed ? 0 : result.groundTruthAvgVariance();
 
-        csvWriter.printf("%b,%s,%s,%s,%s,%s,%d,%d,%s,%s%n",
+        csvWriter.printf("%b,%s,%s,%s,%s,%.2f,%.6f,%d,%d,%d,%.6f,%s%n",
                 result.compatible(),
                 result.monitorId(),
                 result.analyserId(),
                 result.plannerId(),
                 result.executorId(),
                 makespanCell,
+                groundTruthCell,
                 result.actionableCycles(),
+                result.opportunityCycles(),
                 result.actionsExecuted(),
                 conversionRateCell,
                 status);
     }
-    
+
 }

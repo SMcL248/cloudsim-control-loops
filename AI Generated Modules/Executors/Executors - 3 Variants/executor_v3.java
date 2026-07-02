@@ -14,8 +14,6 @@ import org.cloudbus.cloudsim.core.HostEntity;
  */
 public class executor_v3 implements Executor<int[]> {
 
-    private int actionsExecuted = 0;
-
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
         double now = actionSpace.getNow();
@@ -60,14 +58,7 @@ public class executor_v3 implements Executor<int[]> {
                 ". Broker=", actionSpace.getUserId());
 
         actionSpace.requestVmMigration(targetVm, targetHost);
-        actionsExecuted++;
-        Log.printlnConcat(now, ": [Executor_v3] Migration requested. Cumulative actions: ", actionsExecuted);
         return true;
-    }
-
-    @Override
-    public int getActionsExecuted() {
-        return actionsExecuted;
     }
 
     @Override

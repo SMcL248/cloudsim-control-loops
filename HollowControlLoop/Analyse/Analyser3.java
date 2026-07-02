@@ -11,14 +11,12 @@ public class Analyser3 implements Analyser<Map<HostEntity, Map<String, Double>>,
     private static final String METRIC = "ram_util";
     private static final double UPPER_THRESHOLD = 0.8;
     private static final double LOWER_THRESHOLD = 0.2;
-    private int actionableCycles = 0;
 
     @Override
     public Diagnosis<HostEntity> analyse(Map<HostEntity, Map<String, Double>> metrics, ReadSpace readSpace) {
 
         Map<HostEntity, LoadState> classification = new HashMap<>();
         Map<HostEntity, Double> values = new HashMap<>();
-
 
 
         //Iterate by Host
@@ -41,9 +39,6 @@ public class Analyser3 implements Analyser<Map<HostEntity, Map<String, Double>>,
             }
         }
         
-        if (classification.containsValue(LoadState.OVERLOADED)){
-            actionableCycles++;
-        }
 
         return new Diagnosis<>(classification, values);
 
@@ -59,8 +54,4 @@ public class Analyser3 implements Analyser<Map<HostEntity, Map<String, Double>>,
         return "host-loadstate";
     }
 
-    @Override
-    public int getActionableCycles() {
-        return actionableCycles;
-    }
 }

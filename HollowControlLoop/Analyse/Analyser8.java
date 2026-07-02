@@ -9,7 +9,6 @@ public class Analyser8 implements Analyser<double[], LoadState[]>{
 
     private static final double UPPER_THRESHOLD = 0.8;
     private static final double LOWER_THRESHOLD = 0.2;
-    private int actionableCycles = 0;
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
@@ -39,14 +38,6 @@ public class Analyser8 implements Analyser<double[], LoadState[]>{
             i++;
         }
 
-        for (LoadState l : classification){
-            if (l == LoadState.OVERLOADED){
-                actionableCycles++;
-                break;
-            }
-        }
-
-
         return classification;
 
     }
@@ -59,11 +50,6 @@ public class Analyser8 implements Analyser<double[], LoadState[]>{
     @Override
     public String outputGuid() {
         return "host-loadstate";
-    }
-
-    @Override
-    public int getActionableCycles() {
-        return actionableCycles;
     }
 
 }
