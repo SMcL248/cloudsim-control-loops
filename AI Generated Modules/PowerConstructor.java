@@ -13,6 +13,7 @@ import java.io.PrintWriter;
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.CloudletSchedulerTimeShared;
 import org.cloudbus.cloudsim.Datacenter;
+import org.cloudbus.cloudsim.power.PowerDatacenter;
 import org.cloudbus.cloudsim.DatacenterCharacteristics;
 import org.cloudbus.cloudsim.Host;
 import org.cloudbus.cloudsim.core.CloudSim;
@@ -21,18 +22,20 @@ import org.cloudbus.cloudsim.provisioners.PeProvisionerSimple;
 import org.cloudbus.cloudsim.provisioners.RamProvisionerSimple;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.UtilizationModel;
+import org.cloudbus.cloudsim.UtilizationModel;  
 import org.cloudbus.cloudsim.UtilizationModelFull;
 import org.cloudbus.cloudsim.Vm;
+import org.cloudbus.cloudsim.power.PowerVm;
+import org.cloudbus.cloudsim.power.models.PowerModelLinear;
 import org.cloudbus.cloudsim.VmAllocationPolicySimpler;
 import org.cloudbus.cloudsim.VmSchedulerTimeShared;
 
-public class ConstructorVariableVM {
+public class PowerConstructor {
 
     public static HollowedControl<double[], LoadState[], int[]> broker;
 
     private static List<Cloudlet> cloudletList;
-    private static List<Vm> vmlist;
+    private static List<PowerVm> vmlist;
 
     static List<SimulationResult> results = new ArrayList<>();
     static PrintWriter csvWriter;
@@ -55,6 +58,8 @@ public class ConstructorVariableVM {
         int numCombinations = monitorDict.length * analyserDict.length * plannerDict.length * executorDict.length;
 
         initCsv();
+
+        int counter = 0;
 
         for (Monitor m : monitorDict){
             for (Analyser a : analyserDict) {
@@ -88,6 +93,7 @@ public class ConstructorVariableVM {
                             result.makespan() != -1){
                             notCompatibleAndSucceededCounter++;
                         }
+
                     }
                 }
             }
@@ -118,8 +124,8 @@ public class ConstructorVariableVM {
     }
 
     static void initCsv() throws IOException {
-        csvWriter = new PrintWriter(new FileWriter("simulation_results_cloudlet.csv"));
-        csvWriter.println("compatible,monitor,analyser,planner,executor,makespan,average_cpu_demand_variance,actionable_cycles,opportunity_cycles,actions_proposed,actions_executed,conversion_rate,status");
+        csvWriter = new PrintWriter(new FileWriter("simulation_results_energy.csv"));
+        csvWriter.println("compatible,monitor,analyser,planner,executor,makespan,average_cpu_demand_variance,average_power,actionable_cycles,opportunity_cycles,actions_proposed,actions_executed,conversion_rate,status");
     }
 
     static SimulationResult runSimulation(Monitor<double[]> m, Analyser<double[], LoadState[]> a,
@@ -139,7 +145,7 @@ public class ConstructorVariableVM {
 
 			CloudSim.init(num_user, calendar, trace_flag);
 
-			Datacenter datacenter0 = createDatacenter("Datacenter_0", 6, 4);
+			PowerDatacenter datacenter0 = createDatacenter("Datacenter_0", 6, 4);
 
 			broker = new HollowedControl<>(
                 "broker_0",
@@ -179,7 +185,11 @@ public class ConstructorVariableVM {
                 broker.getOpportunityCycles(),
                 broker.getActionsProposed(),
                 broker.getActionsExecuted(),
-                makespan, compatible, broker.getGroundTruthAvgVariance());
+                makespan, 
+                compatible, 
+                broker.getGroundTruthAvgVariance(),
+                datacenter0.getPower()
+            );
 
 		}
 		catch (Exception exception)
@@ -199,20 +209,23 @@ public class ConstructorVariableVM {
                 broker.getOpportunityCycles(),
                 broker.getActionsProposed(),
                 broker.getActionsExecuted(),
-                -1, compatible, broker.getGroundTruthAvgVariance());
+                -1, 
+                compatible, 
+                broker.getGroundTruthAvgVariance()
+            );
 
 		}
 
     }
 
-    private static Datacenter createDatacenter(String name, int numHosts, int pesPerHost) {
+    private static PowerDatacenter createDatacenter(String name, int numHosts, int pesPerHost) {
 
         int mips    = 1000;
         int ram     = 16384;
         long storage = 1000000;
         int bw      = 10000;
 
-        List<Host> hostList = new ArrayList<>();
+        List<FixedPowerHost> hostList = new ArrayList<>();
 
         for (int hostId = 0; hostId < numHosts; hostId++) {
 
@@ -221,13 +234,14 @@ public class ConstructorVariableVM {
                 peList.add(new Pe(peId, new PeProvisionerSimple(mips)));
             }
 
-            hostList.add(new Host(
+            hostList.add(new FixedPowerHost(
                 hostId,
                 new RamProvisionerSimple(ram),
                 new BwProvisionerSimple(bw),
                 storage,
                 peList,
-                new VmSchedulerTimeShared(peList)
+                new VmSchedulerTimeShared(peList),
+                new PowerModelLinear(250, 0.6)
             ));
         }
 
@@ -243,9 +257,9 @@ public class ConstructorVariableVM {
         DatacenterCharacteristics characteristics = new DatacenterCharacteristics(
             arch, os, vmm, hostList, time_zone, cost, costPerMem, costPerStorage, costPerBw);
 
-        Datacenter datacenter = null;
+        PowerDatacenter datacenter = null;
         try {
-            datacenter = new Datacenter(name, characteristics, new VmAllocationPolicySimpler(hostList), new LinkedList<>(), 0);
+            datacenter = new PowerDatacenter(name, characteristics, new VmAllocationPolicySimpler(hostList), new LinkedList<>(), 1);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -253,8 +267,8 @@ public class ConstructorVariableVM {
         return datacenter;
     }
 
-	private static List<Vm> createVM(int userId, int vms, int idShift) {
-		LinkedList<Vm> list = new LinkedList<>();
+	private static List<PowerVm> createVM(int userId, int vms, int idShift) {
+		LinkedList<PowerVm> list = new LinkedList<>();
 
         Random rng = new Random(42);
 
@@ -264,10 +278,22 @@ public class ConstructorVariableVM {
 		int pesNumber = 1;
 		String vmm = "Xen";
 
-		Vm[] vm = new Vm[vms];
+		PowerVm[] vm = new PowerVm[vms];
 
 		for(int i=0;i<vms;i++){
-			vm[i] = new Vm(idShift + i, userId, MIPS_TIERS[rng.nextInt(MIPS_TIERS.length)], pesNumber, ram, bw, size, vmm, new CloudletSchedulerTimeShared());
+			vm[i] = new PowerVm(
+                idShift + i, 
+                userId, 
+                MIPS_TIERS[rng.nextInt(MIPS_TIERS.length)], 
+                pesNumber, 
+                ram, 
+                bw, 
+                size, 
+                1,
+                vmm, 
+                new CloudletSchedulerTimeShared(),
+                100
+            );
 			list.add(vm[i]);
             Log.println("VM #" + vm[i].getId() + " | MIPS: " + vm[i].getMips());
 		}
@@ -344,8 +370,9 @@ public class ConstructorVariableVM {
         double conversionRateCell = (conversionRate >= 0) ? conversionRate : 0;
         double makespanCell = failed ? 0 : result.makespan();
         double groundTruthCell = failed ? 0 : result.groundTruthAvgVariance();
+        double powerCell = failed ? 0 : result.energy()/makespanCell;
 
-        csvWriter.printf("%b,%s,%s,%s,%s,%.2f,%.6f,%d,%d,%d,%d,%.6f,%s%n",
+        csvWriter.printf("%b,%s,%s,%s,%s,%.2f,%.6f,%.2f,%d,%d,%d,%d,%.6f,%s%n",
                 result.compatible(),
                 result.monitorId(),
                 result.analyserId(),
@@ -353,6 +380,7 @@ public class ConstructorVariableVM {
                 result.executorId(),
                 makespanCell,
                 groundTruthCell,
+                powerCell,
                 result.actionableCycles(),
                 result.opportunityCycles(),
                 result.actionsProposed(),

@@ -19,41 +19,51 @@ import java.util.Random;
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.CloudletSchedulerTimeShared;
 import org.cloudbus.cloudsim.Datacenter;
+import org.cloudbus.cloudsim.power.PowerDatacenter;
+import org.cloudbus.cloudsim.DatacenterBroker;
 import org.cloudbus.cloudsim.DatacenterCharacteristics;
 import org.cloudbus.cloudsim.Host;
+import org.cloudbus.cloudsim.power.PowerHost;
+import org.cloudbus.cloudsim.power.models.PowerModelLinear;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.Pe;
 import org.cloudbus.cloudsim.Storage;
 import org.cloudbus.cloudsim.UtilizationModel;
 import org.cloudbus.cloudsim.UtilizationModelFull;
-import org.cloudbus.cloudsim.Vm;
+import org.cloudbus.cloudsim.UtilizationModelNull;
+import org.cloudbus.cloudsim.UtilizationModelPlanetLabInMemory;
+import org.cloudbus.cloudsim.UtilizationModelStochastic;
+import org.cloudbus.cloudsim.power.PowerVm;
 import org.cloudbus.cloudsim.VmAllocationPolicySimple;
+import org.cloudbus.cloudsim.VmAllocationWithSelectionPolicy;
 import org.cloudbus.cloudsim.VmSchedulerTimeShared;
 import org.cloudbus.cloudsim.core.CloudSim;
 import org.cloudbus.cloudsim.provisioners.BwProvisionerSimple;
 import org.cloudbus.cloudsim.provisioners.PeProvisionerSimple;
 import org.cloudbus.cloudsim.provisioners.RamProvisionerSimple;
+import org.cloudbus.cloudsim.selectionPolicies.SelectionPolicyLeastFullByCapacity;
 
 /**
  * An example showing how to pause and resume the simulation,
  * and create simulation entities (a DatacenterBroker in this example)
  * dynamically.
  */
-public class ManualControllerVmMigrationSimple {
-	public static HollowedControl broker;
+public class PowerScenarioTestControl {
+
+    public static HollowedControl broker;
 
 	/** The cloudlet list. */
 	private static List<Cloudlet> cloudletList;
 
 	/** The vmlist. */
-	private static List<Vm> vmlist;
+	private static List<PowerVm> vmlist;
 
 	// Possible VM MIPS capacities
     private static final int[] MIPS_TIERS = {250, 500, 1000};
 
-	private static List<Vm> createVM(int userId, int vms, int idShift) {
+	private static List<PowerVm> createVM(int userId, int vms, int idShift) {
 		//Creates a container to store VMs. This list is passed to the broker later
-		LinkedList<Vm> list = new LinkedList<>();
+		LinkedList<PowerVm> list = new LinkedList<>();
 
         Random rng = new Random(42);
 
@@ -65,10 +75,22 @@ public class ManualControllerVmMigrationSimple {
 		String vmm = "Xen"; //VMM name
 
 		//create VMs
-		Vm[] vm = new Vm[vms];
+		PowerVm[] vm = new PowerVm[vms];
 
 		for(int i=0;i<vms;i++){
-			vm[i] = new Vm(idShift + i, userId, MIPS_TIERS[rng.nextInt(MIPS_TIERS.length)], pesNumber, ram, bw, size, vmm, new CloudletSchedulerTimeShared());
+			vm[i] = new PowerVm(
+                idShift + i, 
+                userId, 
+                MIPS_TIERS[rng.nextInt(MIPS_TIERS.length)], 
+                pesNumber, 	
+                ram, 
+                bw, 
+                size, 
+                1,
+                vmm, 
+                new CloudletSchedulerTimeShared(), 
+                1
+            );
 			list.add(vm[i]);
             Log.println("VM #" + vm[i].getId() + " | MIPS: " + vm[i].getMips());
 		}
@@ -89,12 +111,21 @@ public class ManualControllerVmMigrationSimple {
 		long fileSize = 300;
 		long outputSize = 300;
 		int pesNumber = 1;
-		UtilizationModel utilizationModel = new UtilizationModelFull();
+		UtilizationModel utilizationModel = new UtilizationModelStochastic();
 
 		Cloudlet[] cloudlet = new Cloudlet[cloudlets];
 
 		for(int i=0;i<cloudlets;i++){
-			cloudlet[i] = new Cloudlet(idShift + i, (long)(minLength + random.nextDouble() * (maxLength - minLength)), pesNumber, fileSize, outputSize, utilizationModel, utilizationModel, utilizationModel);
+			cloudlet[i] = new Cloudlet(
+                idShift + i, 
+                (long)(minLength + random.nextDouble() * (maxLength - minLength)), 
+                pesNumber, 
+                fileSize, 
+                outputSize, 
+                utilizationModel, 
+                utilizationModel, 
+                utilizationModel
+            );
 			// setting the owner of these Cloudlets
 			cloudlet[i].setUserId(userId);
 			list.add(cloudlet[i]);
@@ -103,14 +134,13 @@ public class ManualControllerVmMigrationSimple {
 		return list;
 	}
 
-
 	////////////////////////// STATIC METHODS ///////////////////////
 
 	/**
 	 * Creates main() to run this example
 	 */
 	public static void main(String[] args) {
-		Log.println("Starting ManualControllerVmMigrationSimple...");
+		Log.println("Starting ManualControllerVmMigratioSimpleCompare...");
 
 		try {
 			// First step: Initialize the CloudSim package. It should be called
@@ -124,19 +154,29 @@ public class ManualControllerVmMigrationSimple {
 
 			// Second step: Create Datacenters
 			//Datacenters are the resource providers in CloudSim. We need at list one of them to run a CloudSim simulation
-			Datacenter datacenter0 = createDatacenter("Datacenter_0", 6, 4);
+			PowerDatacenter datacenter0 = createDatacenter("Datacenter_0", 6, 4);
+	//		datacenter0.setSchedulingInterval(1.0);
+
+            datacenter0.setDisableMigrations(true);
 
 			//Third step: Create Broker
-			broker = new HollowedControl("Broker_0", 100, new monitor_v4(), new analyser_v3(), new planner_v2(), new executor_v1());
+			broker = new HollowedControl("broker_0", 
+                100, 
+                new Monitor7(), 
+                new Analyser9(), 
+                new Planner5(), 
+                new Executor5()
+            );
 			int brokerId = broker.getId();
 
 			//Fourth step: Create VMs and Cloudlets and send them to broker
-			vmlist = createVM(brokerId,12, 0); //creating 5 vms
+			vmlist = createVM(brokerId, 12, 0); //creating 5 vms
 			cloudletList = createCloudlet(brokerId, 60, 0); // creating 10 cloudlets
 
 			broker.submitGuestList(vmlist);
 			broker.submitCloudletList(cloudletList);
 
+			Log.disable();
 			// Fifth step: Starts the simulation
 			CloudSim.startSimulation();
 
@@ -144,10 +184,17 @@ public class ManualControllerVmMigrationSimple {
 			List<Cloudlet> newList = broker.getCloudletReceivedList();
 
 			CloudSim.stopSimulation();
+			Log.enable();
 
 			printCloudletList(newList);
 
-			Log.println("ManualControllerVmMigrationSimple finished!");
+            double makespan = newList.stream().mapToDouble(Cloudlet::getExecFinishTime).max().orElse(-1);
+
+            Log.println("Total energy: " + datacenter0.getPower() + " W*sec");
+            Log.println("Average power: " + datacenter0.getPower()/makespan + " W" );
+			Log.println("ManualControllerVmMigrationSimpleCompare finished!");
+
+
 		}
 		catch (Exception e)
 		{
@@ -156,14 +203,14 @@ public class ManualControllerVmMigrationSimple {
 		}
 	}
 
-    private static Datacenter createDatacenter(String name, int numHosts, int pesPerHost) {
+    private static PowerDatacenter createDatacenter(String name, int numHosts, int pesPerHost) {
 
         int mips    = 1000;
         int ram     = 16384;
         long storage = 1000000;
         int bw      = 10000;
 
-        List<Host> hostList = new ArrayList<>();
+        List<FixedPowerHost> hostList = new ArrayList<>();
 
         for (int hostId = 0; hostId < numHosts; hostId++) {
 
@@ -172,13 +219,14 @@ public class ManualControllerVmMigrationSimple {
                 peList.add(new Pe(peId, new PeProvisionerSimple(mips)));
             }
 
-            hostList.add(new Host(
+            hostList.add(new FixedPowerHost(
                 hostId,
                 new RamProvisionerSimple(ram),
                 new BwProvisionerSimple(bw),
                 storage,
                 peList,
-                new VmSchedulerTimeShared(peList)
+                new VmSchedulerTimeShared(peList),
+                new PowerModelLinear(250,0.6)
             ));
         }
 
@@ -194,9 +242,15 @@ public class ManualControllerVmMigrationSimple {
         DatacenterCharacteristics characteristics = new DatacenterCharacteristics(
             arch, os, vmm, hostList, time_zone, cost, costPerMem, costPerStorage, costPerBw);
 
-        Datacenter datacenter = null;
+        PowerDatacenter datacenter = null;
         try {
-            datacenter = new Datacenter(name, characteristics, new VmAllocationPolicySimple(hostList), new LinkedList<>(), 0);
+            datacenter = new PowerDatacenter(
+                name, 
+                characteristics, 
+                new VmAllocationWithSelectionPolicy(hostList, new SelectionPolicyLeastFullByCapacity<>()), 
+                new LinkedList<>(), 
+                100
+            );
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -234,5 +288,6 @@ public class ManualControllerVmMigrationSimple {
         }
 
 	}
+
 
 }

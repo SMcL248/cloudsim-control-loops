@@ -21,17 +21,17 @@ public class Executor1 implements Executor<List<MigrationPair>> {
     private void migrateCloudlet(Cloudlet targetCloudlet, GuestEntity fromVm, GuestEntity toVm, ActionSpace actionSpace) {
         Log.printlnConcat("Migrating cloudlet #", targetCloudlet.getCloudletId(), " from VM #", fromVm.getId(), " to VM #", toVm.getId());
 
-        Integer datacenterId = actionSpace.getDatacenterFor(toVm);
+        Integer datacenterId = actionSpace.getDatacenterFor(toVm.getId());
         if (datacenterId == null) {
             Log.printlnConcat("Destination datacenter for VM #", toVm.getId(), " not found. Migration aborted.");
             return;
         }
 
-        actionSpace.moveCloudlet(targetCloudlet, fromVm, toVm, datacenterId);
+        actionSpace.moveCloudlet(targetCloudlet.getCloudletId(), fromVm.getId(), toVm.getId());
     }
 
     @Override
-    public String inputGuid() {
+    public String inputGuid() { 
         return "vm-migration";
     }
 

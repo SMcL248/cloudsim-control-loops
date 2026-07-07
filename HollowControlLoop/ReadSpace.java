@@ -7,7 +7,7 @@ import org.cloudbus.cloudsim.core.HostEntity;
 
 public interface ReadSpace {
 
-    Integer getDatacenterFor(GuestEntity vm);
+    Integer getDatacenterFor(int vmId);
     List<GuestEntity> getVmList();
     Integer getUserId();
     List<HostEntity> getAllHosts();

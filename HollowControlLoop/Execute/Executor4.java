@@ -22,7 +22,7 @@ public class Executor4 implements Executor<int[]>{
         GuestEntity vm = VmList.getById(actionSpace.getVmList(), migration[0]);
         HostEntity targetHost = HostList.getById(actionSpace.getAllHosts(), migration[1]);
 
-        Integer datacenterId = actionSpace.getDatacenterFor(vm);    
+        Integer datacenterId = actionSpace.getDatacenterFor(vm.getId());    
         if (datacenterId == null) {
             Log.printlnConcat(now, ": Cannot migrate VM #", vm.getId(), ": datacenter not found.");
         }else{

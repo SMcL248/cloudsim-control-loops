@@ -171,8 +171,12 @@ public class Constructor {
                 e.getClass().getSimpleName(),
                 broker.getImbalanceCycles(),
                 broker.getOpportunityCycles(),
+                broker.getActionsProposed(),
                 broker.getActionsExecuted(),
-                makespan, compatible, broker.getGroundTruthAvgVariance());
+                makespan, 
+                compatible, 
+                broker.getGroundTruthAvgVariance()
+            );
 
 		}
 		catch (Exception exception)
@@ -186,8 +190,12 @@ public class Constructor {
                 e.getClass().getSimpleName(),
                 broker.getImbalanceCycles(),
                 broker.getOpportunityCycles(),
+                broker.getActionsProposed(),
                 broker.getActionsExecuted(),
-                -1, compatible, broker.getGroundTruthAvgVariance());    
+                -1, 
+                compatible, 
+                broker.getGroundTruthAvgVariance()
+            );    
 
 		}
 

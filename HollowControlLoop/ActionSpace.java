@@ -8,7 +8,7 @@ public interface ActionSpace extends ReadSpace{
 
     void sendCloudlet(int datacenterId, Cloudlet cloudlet);
     void requestVmMigration(GuestEntity vm, HostEntity targetHost);
-    void moveCloudlet(Cloudlet cloudlet, GuestEntity fromVm, GuestEntity toVm, int destDatacenterId);
+    void moveCloudlet(int cloudletId, int fromVmId, int toVmId);
     void requestVmCreation(GuestEntity vm, int targetDatacenter);
-    
+
 }

@@ -51,7 +51,7 @@ public class ManualControllerVmMigrationSimpleCompare {
 	private static List<Vm> vmlist;
 
 	// Possible VM MIPS capacities
-    private static final int[] MIPS_TIERS = {2000, 500, 1000};
+    private static final int[] MIPS_TIERS = {250, 500, 1000};
 
 	private static List<Vm> createVM(int userId, int vms, int idShift) {
 		//Creates a container to store VMs. This list is passed to the broker later

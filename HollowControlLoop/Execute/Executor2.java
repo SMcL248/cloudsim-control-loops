@@ -22,7 +22,7 @@ public class Executor2 implements Executor<List<VmMigrationPair>>{
             GuestEntity vm = entry.vm();
             HostEntity targetHost = entry.targetHost();
 
-            Integer datacenterId = actionSpace.getDatacenterFor(vm);    
+            Integer datacenterId = actionSpace.getDatacenterFor(vm.getId());    
             if (datacenterId == null) {
                 Log.printlnConcat("Cannot migrate VM #", vm.getId(), ": datacenter not found.");
             }else{

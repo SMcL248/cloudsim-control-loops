@@ -1,0 +1,63 @@
+package org.cloudbus.cloudsim.examples;
+
+import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.GuestEntity;
+import org.cloudbus.cloudsim.core.HostEntity;
+
+/**
+ * executor_v1 - Eager Executor
+ *
+ * Strategy: Minimal guards, fast path to migration.
+ * Resolves VM and Host entities by ID, then immediately
+ * submits the migration request. Logs at key decision points only.
+ */
+public class Executor5 implements Executor<int[]> {
+
+    @Override
+    public boolean execute(int[] actions, ActionSpace actionSpace) {
+        double now = actionSpace.getNow();
+        // Log.enable();
+        if (actions[0] == -1 && actions[1] == -1) {
+            Log.printlnConcat(now, ": [Executor_v1] Sentinel received. No migration.");
+            Log.disable();
+            return false;
+        }
+
+        int vmId   = actions[0];
+        int hostId = actions[1];
+
+        GuestEntity targetVm   = findVm(vmId, actionSpace);
+        HostEntity  targetHost = findHost(hostId, actionSpace);
+
+        if (targetVm == null || targetHost == null) {
+            Log.printlnConcat(now, ": [Executor_v1] Entity lookup failed. vmId=", vmId, " hostId=", hostId, ". Migration aborted.");
+            // Log.disable();
+            return false;
+        }
+
+        Log.printlnConcat(now, ": [Executor_v1] Migrating VM ", vmId, " -> Host ", hostId);
+        actionSpace.requestVmMigration(targetVm, targetHost);
+        //  Log.disable();
+        return true;
+    }
+
+    private GuestEntity findVm(int id, ActionSpace actionSpace) {
+        for (GuestEntity vm : actionSpace.getVmList()) {
+            if (vm.getId() == id) return vm;
+        }
+        return null;
+    }
+
+    private HostEntity findHost(int id, ActionSpace actionSpace) {
+        for (HostEntity host : actionSpace.getAllHosts()) {
+            if (host.getId() == id) return host;
+        }
+        return null;
+    }
+
+
+    @Override
+    public String inputGuid() {
+        return "host-migration-pair";
+    }
+}
