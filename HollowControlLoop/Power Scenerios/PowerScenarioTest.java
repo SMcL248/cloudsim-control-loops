@@ -9,6 +9,7 @@
 
 package org.cloudbus.cloudsim.examples;
 
+import java.io.OutputStream;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -18,27 +19,29 @@ import java.util.Random;
 
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.CloudletSchedulerTimeShared;
-import org.cloudbus.cloudsim.Datacenter;
 import org.cloudbus.cloudsim.power.PowerDatacenter;
 import org.cloudbus.cloudsim.DatacenterBroker;
 import org.cloudbus.cloudsim.DatacenterCharacteristics;
 import org.cloudbus.cloudsim.Host;
-import org.cloudbus.cloudsim.power.PowerHost;
 import org.cloudbus.cloudsim.power.models.PowerModelLinear;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.Storage;
 import org.cloudbus.cloudsim.UtilizationModel;
 import org.cloudbus.cloudsim.UtilizationModelFull;
 import org.cloudbus.cloudsim.power.PowerVm;
-import org.cloudbus.cloudsim.VmAllocationPolicySimple;
 import org.cloudbus.cloudsim.VmAllocationWithSelectionPolicy;
 import org.cloudbus.cloudsim.VmSchedulerTimeShared;
 import org.cloudbus.cloudsim.core.CloudSim;
+import org.cloudbus.cloudsim.core.GuestEntity;
+import org.cloudbus.cloudsim.core.HostEntity;
 import org.cloudbus.cloudsim.provisioners.BwProvisionerSimple;
 import org.cloudbus.cloudsim.provisioners.PeProvisionerSimple;
 import org.cloudbus.cloudsim.provisioners.RamProvisionerSimple;
+import org.cloudbus.cloudsim.selectionPolicies.SelectionPolicyCustomRandom;
+import org.cloudbus.cloudsim.selectionPolicies.SelectionPolicyFirstFit;
+import org.cloudbus.cloudsim.selectionPolicies.SelectionPolicyLeastFull;
 import org.cloudbus.cloudsim.selectionPolicies.SelectionPolicyLeastFullByCapacity;
+import org.cloudbus.cloudsim.selectionPolicies.SelectionPolicy;
 
 /**
  * An example showing how to pause and resume the simulation,
@@ -47,8 +50,7 @@ import org.cloudbus.cloudsim.selectionPolicies.SelectionPolicyLeastFullByCapacit
  */
 public class PowerScenarioTest {
 
-    public static DatacenterBroker broker;
-
+    public static MeasuringBroker broker;
 
 	/** The cloudlet list. */
 	private static List<Cloudlet> cloudletList;
@@ -59,11 +61,23 @@ public class PowerScenarioTest {
 	// Possible VM MIPS capacities
     private static final int[] MIPS_TIERS = {250, 500, 1000};
 
+	// Random scenerio seed
+	private static final long SEED = 42L;
+
+	// Scenario architecture
+	private static final int NUM_VMS = 12;
+	private static final int NUM_CLOUDLETS = 60;
+	private static final int NUM_HOSTS = 6;
+
+	// Random allocation of entites switch
+	private static final boolean RANDOM_PLACEMENT = true;// Should VMs be randomly allocated to hosts?
+	private static final boolean RANDOM_ASSIGNMENT = true;// Should cloudlets be randomly allocated to VMs?
+
 	private static List<PowerVm> createVM(int userId, int vms, int idShift) {
 		//Creates a container to store VMs. This list is passed to the broker later
 		LinkedList<PowerVm> list = new LinkedList<>();
 
-        Random rng = new Random(42);
+        Random rng = new Random(SEED);
 
 		//VM Parameters
 		long size = 10000; //image size (MB)
@@ -101,7 +115,8 @@ public class PowerScenarioTest {
 		// Creates a container to store Cloudlets
 		LinkedList<Cloudlet> list = new LinkedList<>();
 
-        Random random = new Random(42); // fixed seed
+		Random lengthRng = new Random(SEED);
+		Random assignRng = new Random(SEED^ 0x9E3779B97F4A7C15L);  
 
 		//cloudlet parameters
 		long minLength = 10000;
@@ -114,9 +129,20 @@ public class PowerScenarioTest {
 		Cloudlet[] cloudlet = new Cloudlet[cloudlets];
 
 		for(int i=0;i<cloudlets;i++){
-			cloudlet[i] = new Cloudlet(idShift + i, (long)(minLength + random.nextDouble() * (maxLength - minLength)), pesNumber, fileSize, outputSize, utilizationModel, utilizationModel, utilizationModel);
+			cloudlet[i] = new Cloudlet(
+				idShift + i, 
+				(long)(minLength + lengthRng.nextDouble() * (maxLength - minLength)), 
+				pesNumber, 
+				fileSize, 
+				outputSize, 
+				utilizationModel, 
+				utilizationModel, 
+				utilizationModel);
 			// setting the owner of these Cloudlets
 			cloudlet[i].setUserId(userId);
+			if (RANDOM_ASSIGNMENT) {
+    			cloudlet[i].setGuestId(assignRng.nextInt(NUM_VMS));// VM ids are 0..numVms-1 with idShift 0
+			}
 			list.add(cloudlet[i]);
 		}
 
@@ -129,7 +155,7 @@ public class PowerScenarioTest {
 	 * Creates main() to run this example
 	 */
 	public static void main(String[] args) {
-		Log.println("Starting ManualControllerVmMigratioSimpleCompare...");
+		Log.println("Starting PowerScenarioTest...");
 
 		try {
 			// First step: Initialize the CloudSim package. It should be called
@@ -143,21 +169,22 @@ public class PowerScenarioTest {
 
 			// Second step: Create Datacenters
 			//Datacenters are the resource providers in CloudSim. We need at list one of them to run a CloudSim simulation
-			PowerDatacenter datacenter0 = createDatacenter("Datacenter_0", 6, 4);
+			PowerDatacenter datacenter0 = createDatacenter("Datacenter_0", NUM_HOSTS, 4);
 
             datacenter0.setDisableMigrations(true);
 
 			//Third step: Create Broker
-			broker = new DatacenterBroker("broker_0");
+			broker = new MeasuringBroker("broker_0");
 			int brokerId = broker.getId();
 
 			//Fourth step: Create VMs and Cloudlets and send them to broker
-			vmlist = createVM(brokerId, 12, 0); //creating 5 vms
-			cloudletList = createCloudlet(brokerId, 60, 0); // creating 10 cloudlets
+			vmlist = createVM(brokerId, NUM_VMS, 0); //creating 5 vms
+			cloudletList = createCloudlet(brokerId, NUM_CLOUDLETS, 0); // creating 10 cloudlets
 
 			broker.submitGuestList(vmlist);
 			broker.submitCloudletList(cloudletList);
 
+			Log.disable();
 			// Fifth step: Starts the simulation
 			CloudSim.startSimulation();
 
@@ -165,14 +192,17 @@ public class PowerScenarioTest {
 			List<Cloudlet> newList = broker.getCloudletReceivedList();
 
 			CloudSim.stopSimulation();
+			Log.enable();
 
 			printCloudletList(newList);
 
             Log.println("Total energy: " + datacenter0.getPower() + " W*sec");
-			Log.println("ManualControllerVmMigrationSimpleCompare finished!");
+			Log.printlnConcat("Average CPU demand variance: ", broker.getAvgVariance());
+			Log.println("PowerScenarioTest finished!");
 		}
 		catch (Exception e)
 		{
+			Log.enable();
 			e.printStackTrace();
 			Log.println("The simulation has been terminated due to an unexpected error");
 		}
@@ -217,6 +247,10 @@ public class PowerScenarioTest {
         DatacenterCharacteristics characteristics = new DatacenterCharacteristics(
             arch, os, vmm, hostList, time_zone, cost, costPerMem, costPerStorage, costPerBw);
 
+		SelectionPolicy<HostEntity> selectionPolicy = (RANDOM_PLACEMENT) 
+			? new SelectionPolicyCustomRandom<>(SEED) 
+			: new SelectionPolicyLeastFullByCapacity<>();
+
         PowerDatacenter datacenter = null;
         try {
             datacenter = new PowerDatacenter(
@@ -224,7 +258,7 @@ public class PowerScenarioTest {
 				characteristics, 
 				new VmAllocationWithSelectionPolicy(
 					hostList, 
-					new SelectionPolicyLeastFullByCapacity<>()
+					selectionPolicy
 				), 
 				new LinkedList<>(), 
 				1);

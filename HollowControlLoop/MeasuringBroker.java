@@ -14,6 +14,9 @@ public class MeasuringBroker extends DatacenterBroker {
     private static final int OBSERVATION_RATE = 100;
     private double varianceSum = 0.0;
     private int cycleCount = 0;
+    private boolean placementDumped = false;
+    private int occupiedHosts = -1;
+    private boolean verbose = false;
 
     public MeasuringBroker(String name) throws Exception { super(name); }
 
@@ -24,22 +27,11 @@ public class MeasuringBroker extends DatacenterBroker {
     }
 
     @Override
-    public void processEvent(SimEvent ev) {
-        CloudSimTags tag = ev.getTag();
-        if (tag == CloudActionTags.RESOURCE_CHARACTERISTICS_REQUEST) {
-            processResourceCharacteristicsRequest(ev);
-        } else if (tag == CloudActionTags.RESOURCE_CHARACTERISTICS) {
-            processResourceCharacteristics(ev);
-        } else if (tag == CloudActionTags.VM_CREATE_ACK) {
-            processVmCreateAck(ev);
-        } else if (tag == CloudActionTags.CLOUDLET_RETURN) {
-            processCloudletReturn(ev);
-        } else if (tag == CloudActionTags.END_OF_SIMULATION) {
-            shutdownEntity();
-        } else if (tag == CloudActionTags.VM_BROKER_EVENT) {
+    protected void processOtherEvent(SimEvent ev) {
+        if (ev.getTag() == CloudActionTags.VM_BROKER_EVENT) {
             measure();
         } else {
-            processOtherEvent(ev);
+            super.processOtherEvent(ev);
         }
     }
 
@@ -50,12 +42,35 @@ public class MeasuringBroker extends DatacenterBroker {
     }
 
     private void measure() {
+
         if (getCloudletList().isEmpty() &&
             getCloudletSubmittedList().size() == getCloudletReceivedList().size()) return;
+
+        if (CloudSim.clock() > 100_000){
+            throw new IllegalStateException("MeasuringBroker still observing at t=" + CloudSim.clock()
+            + " — workload likely stalled; investigate this seed");
+        }
 
         double now = CloudSim.clock();
         List<HostEntity> hosts = getDatacenterCharacteristicsList()
             .values().iterator().next().getHostList();
+
+        if (!placementDumped) {
+            int occupied = 0;
+            for (HostEntity h : hosts) {
+                if (!h.getGuestList().isEmpty()) occupied++;
+                if (verbose) {
+                    StringBuilder sb = new StringBuilder("Host #" + h.getId() + ":");
+                    for (GuestEntity vm : h.getGuestList())
+                        sb.append(" VM#").append(vm.getId())
+                        .append("(").append((int) vm.getMips())
+                        .append(", cloudlets=").append(vm.getCloudletScheduler().getCloudletExecList().size()).append(")");
+                    System.out.println(sb);
+                }
+            }
+            occupiedHosts = occupied;      // unconditional
+            placementDumped = true;        // unconditional
+        }
 
         double[] utils = new double[hosts.size()];
         double mean = 0.0;
@@ -73,6 +88,10 @@ public class MeasuringBroker extends DatacenterBroker {
         cycleCount++;
 
         schedule(getId(), OBSERVATION_RATE, CloudActionTags.VM_BROKER_EVENT);
+    }
+
+    public int getOccupiedHosts() {     
+        return occupiedHosts;   
     }
 
     public double getAvgVariance() {
