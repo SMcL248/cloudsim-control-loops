@@ -266,7 +266,7 @@ public class SelectorMultiSim {
         long failArrivalSeed = scenarioSeed ^ 0x688B16AEA1636CEAL;
         long failHostSeed = scenarioSeed ^ 0x254A2AC1AB035645L;
         long selectionPolicySeed = scenarioSeed ^ 0x632BE59BD9B4E019L;
- 
+        
         broker = null; // reset before each attempt — same defensive pattern as PowerConstructorMultiSim
         Log.disable();
  

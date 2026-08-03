@@ -15,9 +15,12 @@ public interface ReadSpace {
     List<HostEntity> getAllHosts();
     double getNow();
     int[] getMipsTiers();
-    double getHostCapacity(GuestEntity vm);
+    int[] getRamTiers();
+    int[] getBwTiers();
+    double getHostCapacity(GuestEntity vm);     
     boolean hostHasFreePe(HostEntity host);
     boolean isHostFailed(HostEntity host);
+    Cloudlet getCloudletById(int cloudletId);
     GuestEntity getVmById(int vmId);
     HostEntity getHostById(int hostId);
     double getNextMipsTier(GuestEntity vm);
@@ -40,6 +43,7 @@ public interface ReadSpace {
     int getId(GuestEntity vm);
     int getId(Cloudlet cl);
     boolean isHostSuitableForGuest(HostEntity host, GuestEntity vm);
+    boolean canMigrateGuestToHost(HostEntity host, GuestEntity vm);
     double getVmMips(GuestEntity vm);
     double getVmMaxMips(GuestEntity vm);
     List<Double> getVmMipsPerPe(GuestEntity vm);
@@ -50,12 +54,17 @@ public interface ReadSpace {
     boolean isVmMigrating(GuestEntity vm);
     double getVmUtilizationMean(GuestEntity vm);
     double getVmUtilizationMad(GuestEntity vm);
-    double getHostPower(HostEntity host);
+    double getHostPower(HostEntity host);   
     double getHostPowerAtUtil(HostEntity host, double util);
     double getHostMaxPower(HostEntity host);
     double getHostEnergyEstimate(HostEntity host, double fromUtil, double toUtil, double time);
     double getTotalEnergyConsumedSoFar();
     boolean isHostPoweredDown(HostEntity host);
     boolean isHostPoweringUp(HostEntity host);
+    boolean isVmBeingInstantiated(GuestEntity vm);
+    double getCloudletEstimatedFinishTime(GuestEntity vm, Cloudlet cl);
+    List<Cloudlet> getActiveCloudlets();
+    double getNextBwTier(GuestEntity vm);
+    double getNextRamTier(GuestEntity vm);
 
 }

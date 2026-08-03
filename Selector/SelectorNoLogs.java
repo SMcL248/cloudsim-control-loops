@@ -35,7 +35,7 @@ import org.cloudbus.cloudsim.core.PowerGuestEntity;
 import org.cloudbus.cloudsim.core.PowerHostEntity;
  
  
-public class Selector extends DatacenterBroker implements ActionSpace {
+public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
 
     private final List<ControlUnit> controllers;
     private ControlUnit selected;
@@ -98,18 +98,18 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
     private int nextVmId = -1;
 
-    public <M,D,A> Selector(String name, int observationRate, Monitor<M> monitor, Analyser<M,D> analyser,
+    public <M,D,A> SelectorNoLogs(String name, int observationRate, Monitor<M> monitor, Analyser<M,D> analyser,
                              Planner<D,A> planner, Executor<A> executor, int[] mipsTiers, LognormalDistr repairDurationDist, Random unrecoverableRng) throws Exception {
         this(name, observationRate, monitor, analyser, planner, executor, mipsTiers, repairDurationDist, unrecoverableRng, null, null, null);
     }
 
-    public <M,D,A> Selector(String name, int observationRate, Monitor<M> monitor, Analyser<M,D> analyser,
+    public <M,D,A> SelectorNoLogs(String name, int observationRate, Monitor<M> monitor, Analyser<M,D> analyser,
                              Planner<D,A> planner, Executor<A> executor, int[] mipsTiers, LognormalDistr repairDurationDist, Random unrecoverableRng,
                              Predicate<D> imbalancePredicate, Predicate<D> opportunityPredicate) throws Exception {
         this(name, observationRate, monitor, analyser, planner, executor, mipsTiers, repairDurationDist, unrecoverableRng, imbalancePredicate, opportunityPredicate, null);
     }
 
-    public <M,D,A> Selector(String name, int observationRate, Monitor<M> monitor, Analyser<M,D> analyser,
+    public <M,D,A> SelectorNoLogs(String name, int observationRate, Monitor<M> monitor, Analyser<M,D> analyser,
                              Planner<D,A> planner, Executor<A> executor, int[] mipsTiers, LognormalDistr repairDurationDist, Random unrecoverableRng,
                              Predicate<D> imbalancePredicate, Predicate<D> opportunityPredicate,
                              Predicate<A> actionProposedPredicate) throws Exception {
@@ -119,7 +119,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
              mipsTiers, repairDurationDist, unrecoverableRng);
     }
 
-    public Selector(String name, int observationRate, List<ControlUnit> controllers, int[] mipsTiers, LognormalDistr repairDurationDist, Random unrecoverableRng) throws Exception {
+    public SelectorNoLogs(String name, int observationRate, List<ControlUnit> controllers, int[] mipsTiers, LognormalDistr repairDurationDist, Random unrecoverableRng) throws Exception {
         super(name);
         this.observationRate = observationRate;
         this.controllers = controllers;
@@ -223,7 +223,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
  
 // -----------------------ActionSpace------------------------------
 
-    @Override
+   @Override
     // Submit a new cloudlet to a given datacenter
     public void sendCloudlet(int datacenterId, Cloudlet cloudlet) {
         if (datacenterId < 0 || datacenterId >= CloudSim.getNumEntities()) {
@@ -278,7 +278,6 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
     @Override
     public void requestVmMigration(GuestEntity vm, HostEntity targetHost){
-
         Integer datacenterId = getDatacenterFor(vm.getId());
         if (datacenterId == null) {
             Log.printlnConcat(getNow(), ": [Selector] No datacenter found for VM#", vm.getId(), " in requestVmMigration. Aborting.");
@@ -286,7 +285,6 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         }
         GuestMapping payload = new GuestMapping(vm, targetHost);
         send(datacenterId, 0, CloudActionTags.VM_MIGRATE, payload);
-
     }
 
     @Override
@@ -298,7 +296,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         }
 
         if (isHostFailed(vm.getHost())) {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " host is failed, action ignored.");
             Log.disable();
             return false;
@@ -332,7 +330,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             }
             scheduler.allocatePesForGuest(vm, originalShare);
 
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] FAILED.");
             Log.disable();
 
@@ -355,7 +353,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         }
 
         if (isHostFailed(vm.getHost())) {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " host is failed, action ignored.");
             Log.disable();
             return false;
@@ -367,7 +365,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
         List<Double> currentShare = host.getGuestScheduler().getAllocatedMipsForGuest(vm);
         if (currentShare == null) {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestPeAllocation] VM#", vm.getId(), " no current allocation found, aborting");
             Log.disable();
             return false;
@@ -378,7 +376,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
         host.getGuestScheduler().deallocatePesForGuest(vm);
         boolean success = host.getGuestScheduler().allocatePesForGuest(vm, newShare);
-        Log.enable();
+        //Log.enable();
         Log.printlnConcat(getNow(), ": [requestPeScaling] VM#", vm.getId(),
             " success=", success, " requestedShareSize=", newShare.size(),
             " availableMipsAfter=", host.getGuestScheduler().getAvailableMips());
@@ -387,7 +385,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         if (success) {
             ((Vm) vm).setNumberOfPes(vm.getNumberOfPes() + 1);
             vm.getCloudletScheduler().updateCloudletsProcessing(getNow(), newShare);
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestPeScaling] VM#", vm.getId(), " numberOfPes now=", vm.getNumberOfPes());
             Log.disable();
         }
@@ -405,7 +403,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         }
 
         if (isHostFailed(vm.getHost())) {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " host is failed, action ignored.");
             Log.disable();
             return false;
@@ -417,7 +415,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         List<Double> currentShare = host.getGuestScheduler().getAllocatedMipsForGuest(vm);
 
         if (currentShare == null) {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(), " no current allocation found, aborting");
             Log.disable();
             return false;
@@ -430,7 +428,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             boolean removed = newShare.remove(peMips);
 
             if (!removed) {
-                Log.enable();
+                //Log.enable();
                 Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(),
                     " no matching peMips entry found, aborting");
                 Log.disable();
@@ -440,7 +438,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             host.getGuestScheduler().deallocatePesForGuest(vm);
 
             boolean success = host.getGuestScheduler().allocatePesForGuest(vm, newShare);
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(),
                 " success=", success, " requestedShareSize=", newShare.size(),
                 " availableMipsAfter=", host.getGuestScheduler().getAvailableMips());
@@ -449,7 +447,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             if (success) {
                 ((Vm) vm).setNumberOfPes(vm.getNumberOfPes() - 1);
                 vm.getCloudletScheduler().updateCloudletsProcessing(getNow(), newShare);
-                Log.enable();
+                //Log.enable();
                 Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(), " numberOfPes now=", vm.getNumberOfPes());
                 Log.disable();
             }
@@ -457,7 +455,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             return success;
 
         }else{
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestPeDeallocation] Unable to deallocate a PE from VM#", vm.getId());
             Log.disable();
             return false;
@@ -470,7 +468,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     public boolean requestRamScaling(GuestEntity vm, double newRam) {
         if (!(vm instanceof Vm)) return false;
         if (isHostFailed(vm.getHost())) {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " host is failed, action ignored.");
             Log.disable();
             return false;
@@ -491,7 +489,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             // actual allocation ourselves.
             ((Vm) vm).setRam(originalRam);
             host.getGuestRamProvisioner().allocateRamForGuest(vm, originalRam);
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestRamScaling] VM#", vm.getId(), " FAILED.");
             Log.disable();
             return false;
@@ -505,7 +503,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     public boolean requestBwScaling(GuestEntity vm, double newBw) {
         if (!(vm instanceof Vm)) return false;
         if (isHostFailed(vm.getHost())) {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " host is failed, action ignored.");
             Log.disable();
             return false;
@@ -522,7 +520,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             ((Vm) vm).setBw(requestedBw);
             return true;
         } else {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestBwScaling] VM#", vm.getId(), " FAILED.");
             Log.disable();
             return false;
@@ -532,7 +530,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     @Override
     // Create VM and schedule its allocation
     public GuestEntity requestVmCreation(int tierIndex, int sizeTierIndex, int datacenterId) {
-
+        
         if (tierIndex < 0 || tierIndex >= mipsTiers.length
             || sizeTierIndex < 0 || sizeTierIndex >= SIZE_TIERS.length) {
             Log.printlnConcat(getNow(), ": [Selector] Invalid tier index in requestVmCreation (tier=", tierIndex, ", sizeTier=", sizeTierIndex, "). Aborting.");
@@ -573,31 +571,31 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         getGuestsCreatedList().remove(vm);
         minLiveVmCount = Math.min(minLiveVmCount, getGuestsCreatedList().size());
         sendNow(datacenterId, CloudActionTags.VM_DESTROY, vm);
-
+        
     }
 
     @Override
     public void requestHostPowerDown(HostEntity host){
 
         if (getVmListForHost(host).size() != 0){
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Cannot power down Host #", host.getId(), " | Host must have no VMs allocated.");
             Log.disable();
             return;
         }else if(isHostPoweredDown(host)){
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Cannot power down Host #", host.getId(), " | Host already powered down.");
             Log.disable();
             return;
         } else if (isHostPoweringUp(host)){
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Cannot power down Host #", host.getId(), " | Host is currently being powered up.");
             Log.disable();
             return;
         }
 
 
-        Log.enable();
+        //Log.enable();
         Log.printlnConcat(getNow(), ": [Selector] Powering Host #", host.getId(), " down.");
         Log.disable();
         send(getId(), 0, CloudActionTags.HOST_POWER_DOWN, getId(host));
@@ -608,13 +606,13 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     public void requestHostPowerUp(HostEntity host){
 
         if(!isHostPoweredDown(host)){
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Cannot power up Host #", host.getId(), " | Host already on.");
             Log.disable();
             return;
         }   
         if (isHostPoweringUp(host)) {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Cannot power up Host #", host.getId(), " | Already booting.");
             Log.disable();
             return;
@@ -624,7 +622,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         PowerModel original = savedPowerModels.get(getId(host));
         ((PowerHostEntity) host).setPowerModel(new PowerModelSpike(original, SPIKE_MULTIPLIER));
 
-        Log.enable();
+        //Log.enable();
         Log.printlnConcat(getNow(), ": [Selector] Powering Host #", host.getId(), " up.");
         Log.disable();
         send(getId(), 100, CloudActionTags.HOST_POWER_UP, getId(host));
@@ -723,7 +721,6 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     }
 
     // Retrieve the next level of MIPS
-    
     @Override
     public double getNextMipsTier(GuestEntity vm) {
         double currentMips = vm.getMips();
@@ -734,7 +731,6 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         }
         return -1.0; // already at top tier, or MIPS doesn't match a known tier
     }
-
 
     @Override
     public double getHostAvailableRam(HostEntity host) {
@@ -1092,9 +1088,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
         // Execute MAPE cycle
         if (selected != null){
-            //Log.enable();
             selected.observeAndAct(this);
-            //Log.disable();
         }
 
         // Schedule next observation
@@ -1125,7 +1119,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         }
         return count;
     }
-    public boolean getCompletedNaturally() {return completedNaturally;}
+    public boolean getCompletedNaturally(){return completedNaturally;}
 
     // Ground truth measurement — runs every cycle, independent of pipeline.
     // Single entry point for every ground-truth signal the Selector may need
@@ -1211,7 +1205,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                 }
 
                 selected = controllers.get((index + 1) % controllers.size());
-                Log.enable();
+                //Log.enable();
                 Log.printlnConcat(getNow(), ": [Selector] Switching to ", selected.getName());
                 Log.disable();
                 
@@ -1226,7 +1220,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         List<Cloudlet> batch = (List<Cloudlet>) ev.getData();
         admitCloudlets(batch);
         pendingInjections--;
-        Log.enable();
+        //Log.enable();
         Log.printlnConcat(getNow(), ": [Selector] ", batch.size(), " Cloudlets injected.");
         Log.disable();
     }
@@ -1251,20 +1245,20 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
         // CHANGE 1: log the previously-silent null case instead of just returning.
         if (targetHost == null) {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Host #", id, " failure event fired but no matching host found — ignored.");
             Log.disable();
             return;
         }
 
         if (isHostFailed(targetHost)) {
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Host #", id, " failure ignored — already failed, existing repair unaffected.");
             Log.disable();
             return;
         }
 
-        Log.enable();
+        //Log.enable();
 
         // CHANGE 2: abort on cast failure instead of logging and falling through.
         if (!(targetHost instanceof Host)) {
@@ -1324,7 +1318,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
             permanentlyDeadHostIds.add(id);
 
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Host #", id, " repair failed — permanently dead, evacuating.");
             Log.disable();
 
@@ -1345,7 +1339,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                 scheduler.allocatePesForGuest(vm, vm.getCurrentRequestedMips());
             }
 
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Host #", id, " has been repaired.");
             Log.disable();
 
@@ -1374,12 +1368,12 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                 }
             }
 
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Admitting ", deferred.size(),
                 " deferred cloudlets for Host #", id, ".");
             Log.disable();
             submitCloudletList(deferred);
-            Log.enable();
+            //Log.enable();
             submitCloudlets();
             Log.disable();
 
@@ -1395,7 +1389,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         host.setPowerModel(OFF_MODEL);
         poweredDownHostIds.add(hostId);
 
-        Log.enable();
+        //Log.enable();
         Log.printlnConcat(getNow(), ": [Selector] Host #", hostId, " powered down.");
         Log.disable();
 
@@ -1409,7 +1403,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         poweredDownHostIds.remove(hostId);
         poweringUpHostIds.remove(hostId);
 
-        Log.enable();
+        //Log.enable();
         Log.printlnConcat(getNow(), ": [Selector] Host #", hostId, " powered up.");
         Log.disable();
 
@@ -1434,7 +1428,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
             if (vm == null || !getGuestsCreatedList().contains(vm)) {
                 numCloudletsAbandoned++;
-                Log.enable();
+                //Log.enable();
                 Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                     " abandoned | target VM#", cl.getGuestId(), " was never created.");
                 Log.disable();
@@ -1445,7 +1439,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
                 if (isHostPermanentlyDead(host)) {
                     numCloudletsAbandoned++;
-                    Log.enable();
+                    //Log.enable();
                     Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                         " abandoned | target VM#", cl.getGuestId(), " host is permanently dead.");
                     Log.disable();
@@ -1456,7 +1450,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                     numCloudletsDeferred++;
                     deferralStartTimeByCloudlet.put(cl.getCloudletId(), getNow());
                     exposedCloudletIds.add(cl.getCloudletId());
-                    Log.enable();
+                    //Log.enable();
                     Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                         " deferred | target VM#", cl.getGuestId(), " host is failed.");
                     Log.disable();
@@ -1504,7 +1498,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
             if (destination != null) {
                 claimedThisBatch.add(destination.getId());
-                Log.enable();
+                //Log.enable();
                 Log.printlnConcat(getNow(), ": [Selector] Evacuating VM#", vm.getId(),
                     " from Host #", deadHost.getId(), " to Host #", destination.getId());
                 Log.disable();
@@ -1515,18 +1509,18 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                         Double deferredAt = deferralStartTimeByCloudlet.remove(cl.getCloudletId());
                         if (deferredAt != null) totalDeferredWaitTime += (getNow() - deferredAt);
                     }
-                    Log.enable();
+                    //Log.enable();
                     Log.printlnConcat(getNow(), ": [Selector] Admitting ", deferredForThisVm.size(),
                         " deferred cloudlets for evacuated VM#", vm.getId(), ".");
                     Log.disable();
                     submitCloudletList(deferredForThisVm);
-                    Log.enable();
+                    //Log.enable();
                     submitCloudlets();
                     Log.disable();
                 }
 
             } else {
-                Log.enable();
+                //Log.enable();
                 Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(),
                     " could not be evacuated | no healthy host has room. Abandoning its workload.");
                 Log.disable();
@@ -1537,7 +1531,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                     getCloudletSubmittedList().remove(cl);
                     cloudletsSubmitted--;
                     numCloudletsAbandoned++;
-                    Log.enable();
+                    //Log.enable();
                     Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                         " abandoned | VM#", vm.getId(), " could not be evacuated.");
                     Log.disable();
@@ -1546,7 +1540,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                 for (Cloudlet cl : deferredForThisVm) {
                     deferralStartTimeByCloudlet.remove(cl.getCloudletId());
                     numCloudletsAbandoned++;
-                    Log.enable();
+                    //Log.enable();
                     Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                         " abandoned | VM#", vm.getId(), " could not be evacuated.");
                     Log.disable();
@@ -1558,11 +1552,11 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     // Debugging: Print Host->VM allocations
     private void logVmAllocation(ReadSpace readSpace) {
         if (suppressDebugLogging) return;
-        System.out.println("=== VM Allocation (t=" + readSpace.getNow() + ") ===");
+        //System.out.println("=== VM Allocation (t=" + readSpace.getNow() + ") ===");
         for (HostEntity host : readSpace.getAllHosts()) {
             List<GuestEntity> guests = host.getGuestList();
             if (guests.isEmpty()) {
-                System.out.println("  Host #" + host.getId() + ": (empty)");
+                //System.out.println("  Host #" + host.getId() + ": (empty)");
             } else {
                 for (GuestEntity vm : guests) {
                     List<Cloudlet> execList = vm.getCloudletScheduler().getCloudletExecList();
@@ -1572,20 +1566,20 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                         // System.out.println("VM #" + vm.getId()
                         //         + ", Cloudlet #" + cl.getCloudletId());
                     }
-                    System.out.println("  Host #" + host.getId()
-                            + " <- VM #" + vm.getId()
-                            + " (mips=" + vm.getMips()
-                            + ", RAM=" + vm.getRam()
-                            + ", BW=" + vm.getBw()
-                            + ", Image size=" + vm.getSize()
-                            + ", cloudlets=" + execList.size()
-                            + ", cpu=" + vm.getNumberOfPes()
-                            + ", remainingMI=" + remainingLength + ")");
+                    //System.out.println("  Host #" + host.getId()
+                            // + " <- VM #" + vm.getId()
+                            // + " (mips=" + vm.getMips()
+                            // + ", RAM=" + vm.getRam()
+                            // + ", BW=" + vm.getBw()
+                            // + ", Image size=" + vm.getSize()
+                            // + ", cloudlets=" + execList.size()
+                            // + ", cpu=" + vm.getNumberOfPes()
+                            // + ", remainingMI=" + remainingLength + ")");
 
                 }
             }
         }
-        System.out.println("=== End VM Allocation ===");
+        //System.out.println("=== End VM Allocation ===");
     }
 
     // One-time sweep: catches initial-batch cloudlets whose target VM was never created (admitCloudlets() only covers injected/repair-flushed batches)
@@ -1604,7 +1598,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         for (Cloudlet cl : stuck) {
             numCloudletsAbandoned++;
             getCloudletList().remove(cl);
-            Log.enable();
+            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                 " abandoned | target VM#", cl.getGuestId(), " was never created.");
             Log.disable();
