@@ -56,6 +56,11 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     private int utilizationCycleCount;
     private int groundTruthCycleCount = 0;
 
+    private double hostFreeMipsSum;
+    private double hostFreeRamSum;
+    private double hostFreeBwSum;
+    private double vmFreeMipsSum;
+
     public static boolean suppressDebugLogging = false;
 
     private int pendingInjections = 0;
@@ -75,6 +80,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     private final Map<Integer, Double> failureStartTimeByHost = new HashMap<>();
     private int numCloudletsDeferred = 0;
     private int numCloudletsAbandoned = 0;
+    private int numCloudletsAbandonedHostPoweredDown = 0;
     private double totalDeferredWaitTime = 0.0;
     private int minLiveVmCount = Integer.MAX_VALUE;
     private final Map<Integer, Double> deferralStartTimeByCloudlet = new HashMap<>();
@@ -82,6 +88,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     private final Set<Integer> exposedCloudletIds = new HashSet<>();
     private final Set<Integer> poweredDownHostIds = new HashSet<>();
     private final Set<Integer> poweringUpHostIds = new HashSet<>();
+    private final Set<Integer> loggedMissingAllocation = new HashSet<>();
     private final Map<Integer, PowerModel> savedPowerModels = new HashMap<>();
 
     private static final double UNRECOVERABLE_PROBABILITY = 0.20;
@@ -206,11 +213,12 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         getCloudletReceivedList().add(cloudlet);
         cloudletsSubmitted--;
 
-        if (getCloudletList().isEmpty()
-            && cloudletsSubmitted == 0
+        if (getCloudletList().isEmpty() 
+            && cloudletsSubmitted == 0 
             && pendingInjections == 0
-            && pendingFailures == 0
+            && pendingFailures == 0 
             && pendingRepairs == 0) {
+            completedNaturally = true;
 
             minLiveVmCount = Math.min(minLiveVmCount, getGuestsCreatedList().size());
 
@@ -226,8 +234,9 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     @Override
     // Submit a new cloudlet to a given datacenter
     public void sendCloudlet(int datacenterId, Cloudlet cloudlet) {
-        if (datacenterId < 0 || datacenterId >= CloudSim.getNumEntities()) {
-            Log.printlnConcat(getNow(), ": [Selector] Invalid datacenterId=", datacenterId, " in sendCloudlet. Aborting.");
+        if (!getDatacenterIdsList().contains(datacenterId)) {
+            Log.printlnConcat(getNow(), ": [Selector] Invalid datacenterId=", datacenterId,
+                " in sendCloudlet -- not a registered datacenter. Aborting.");
             return;
         }
         sendNow(datacenterId, CloudActionTags.CLOUDLET_SUBMIT, cloudlet);
@@ -259,6 +268,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     }
 
     @Override
+    // Pause processing on given Cloudlet
     public void requestCloudletPause(int datacenterId, Cloudlet cl){
         if (datacenterId < 0 || datacenterId >= CloudSim.getNumEntities()) {
             Log.printlnConcat(getNow(), ": [Selector] Invalid datacenterId=", datacenterId, " in sendCloudlet. Aborting.");
@@ -268,6 +278,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     }
 
     @Override
+    // Resume processing on given Cloudlet
     public void requestCloudletResume(int datacenterId, Cloudlet cl) {
         if (datacenterId < 0 || datacenterId >= CloudSim.getNumEntities()) {
             Log.printlnConcat(getNow(), ": [Selector] Invalid datacenterId=", datacenterId, " in sendCloudlet. Aborting.");
@@ -277,6 +288,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     }
 
     @Override
+    // Request the migration of the given VM to the given host
     public void requestVmMigration(GuestEntity vm, HostEntity targetHost){
 
         Integer datacenterId = getDatacenterFor(vm.getId());
@@ -378,6 +390,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
         host.getGuestScheduler().deallocatePesForGuest(vm);
         boolean success = host.getGuestScheduler().allocatePesForGuest(vm, newShare);
+
         Log.enable();
         Log.printlnConcat(getNow(), ": [requestPeScaling] VM#", vm.getId(),
             " success=", success, " requestedShareSize=", newShare.size(),
@@ -390,6 +403,15 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             Log.enable();
             Log.printlnConcat(getNow(), ": [requestPeScaling] VM#", vm.getId(), " numberOfPes now=", vm.getNumberOfPes());
             Log.disable();
+        } else {
+            // Insufficient host capacity for the extra PE -- restore the VM's original
+            // share rather than leaving it deallocated.
+            host.getGuestScheduler().allocatePesForGuest(vm, currentShare);
+            Log.enable();
+            Log.printlnConcat(getNow(), ": [requestPeScaling] VM#", vm.getId(),
+                " FAILED to add PE -- insufficient host capacity, original allocation restored.");
+            Log.disable();
+            return false;
         }
 
         return success;
@@ -415,11 +437,13 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         double peMips = vm.getMips();
 
         List<Double> currentShare = host.getGuestScheduler().getAllocatedMipsForGuest(vm);
-
         if (currentShare == null) {
-            Log.enable();
-            Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(), " no current allocation found, aborting");
-            Log.disable();
+            if (loggedMissingAllocation.add(vm.getId())) {
+                Log.enable();
+                Log.printlnConcat(getNow(), ": [requestPeAllocation] VM#", vm.getId(),
+                    " FIRST TIME no current allocation found -- lost host-level PE allocation somewhere before this point, aborting");
+                Log.disable();
+            }
             return false;
         }
 
@@ -452,6 +476,13 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                 Log.enable();
                 Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(), " numberOfPes now=", vm.getNumberOfPes());
                 Log.disable();
+            } else {
+                host.getGuestScheduler().allocatePesForGuest(vm, currentShare);
+                Log.enable();
+                Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(),
+                    " FAILED -- insufficient host capacity, original allocation restored.");
+                Log.disable();
+                return false;
             }
 
             return success;
@@ -565,41 +596,42 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     }
 
     @Override
+    // Request the destruciton of a VM (and its workload)
     public void requestVmDestruction(GuestEntity vm) {
 
         Integer datacenterId = getDatacenterFor(vm.getId());
         if (datacenterId == null) { return; }
 
-        getGuestsCreatedList().remove(vm);
-        minLiveVmCount = Math.min(minLiveVmCount, getGuestsCreatedList().size());
-        sendNow(datacenterId, CloudActionTags.VM_DESTROY, vm);
+        strandAndDestroyGuest(vm, false);
 
     }
-
+    
     @Override
+    // Request the power
     public void requestHostPowerDown(HostEntity host){
 
-        if (getVmListForHost(host).size() != 0){
-            Log.enable();
-            Log.printlnConcat(getNow(), ": [Selector] Cannot power down Host #", host.getId(), " | Host must have no VMs allocated.");
-            Log.disable();
-            return;
-        }else if(isHostPoweredDown(host)){
-            Log.enable();
+        Log.enable();
+
+        // if (getVmListForHost(host).size() != 0){
+        //     Log.enable();
+        //     Log.printlnConcat(getNow(), ": [Selector] Cannot power down Host #", host.getId(), " | Host must have no VMs allocated.");
+        //     Log.disable();
+        //     return;
+        // }else 
+
+        if(isHostPoweredDown(host)){
             Log.printlnConcat(getNow(), ": [Selector] Cannot power down Host #", host.getId(), " | Host already powered down.");
             Log.disable();
             return;
         } else if (isHostPoweringUp(host)){
-            Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Cannot power down Host #", host.getId(), " | Host is currently being powered up.");
             Log.disable();
             return;
         }
 
-
-        Log.enable();
         Log.printlnConcat(getNow(), ": [Selector] Powering Host #", host.getId(), " down.");
         Log.disable();
+
         send(getId(), 0, CloudActionTags.HOST_POWER_DOWN, getId(host));
 
     }
@@ -722,9 +754,8 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         return null;
     }
 
-    // Retrieve the next level of MIPS
-    
     @Override
+    // Retrieve the next level of MIPS
     public double getNextMipsTier(GuestEntity vm) {
         double currentMips = vm.getMips();
         for (int i = 0; i < mipsTiers.length - 1; i++) {
@@ -1077,28 +1108,88 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             vmAllocationLogged = true; 
         }
 
+        System.out.println("CHECKPOINT A - before natural-completion check, t=" + getNow()
+            + " pendingInjections=" + pendingInjections
+            + " pendingFailures=" + pendingFailures
+            + " pendingRepairs=" + pendingRepairs
+            + " cloudletListEmpty=" + getCloudletList().isEmpty()
+            + " submitted=" + getCloudletSubmittedList().size()
+            + " received=" + getCloudletReceivedList().size());
+
         // Quit if we have finished Cloudlet workload
         if (pendingInjections == 0 
             && pendingFailures == 0
             && pendingRepairs == 0
             && getCloudletList().isEmpty() 
             && getCloudletSubmittedList().size() == getCloudletReceivedList().size()) {
+            System.out.println("CHECKPOINT B - taking natural-completion early return, t=" + getNow());
             completedNaturally = true;
             return;
         }
 
+        System.out.println("CHECKPOINT C - past natural-completion check, t=" + getNow());
         updateGroundTruth();
+        System.out.println("CHECKPOINT D - past updateGroundTruth, t=" + getNow());
         updateSelected(); 
+        System.out.println("CHECKPOINT E - past updateSelected, selected=" + selected + ", t=" + getNow());
 
-        // Execute MAPE cycle
-        if (selected != null){
-            //Log.enable();
-            selected.observeAndAct(this);
-            //Log.disable();
+        // DEBUGGING
+        Log.enable();
+        Log.printlnConcat(getNow(), ": [Selector] | Submitted: ", getCloudletSubmittedList().size(), " | Recieved: ", getCloudletReceivedList().size());
+        Log.disable();
+
+        Set<Integer> submittedIds = new HashSet<>();
+        for (Cloudlet cl : getCloudletSubmittedList()) submittedIds.add(cl.getCloudletId());
+        Set<Integer> receivedIds = new HashSet<>();
+        for (Cloudlet cl : getCloudletReceivedList()) receivedIds.add(cl.getCloudletId());
+        submittedIds.removeAll(receivedIds);
+        Log.enable();
+        Log.printlnConcat(getNow(), ": [Selector] STUCK cloudlet IDs: ", submittedIds);
+        Log.disable();
+
+        for (int id : submittedIds){
+            Log.enable();
+            Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", id, " -> VM #", getVmForCloudlet(id).getId());
+            Log.disable();
         }
 
+        Log.enable();
+        getCloudletSubmittedList().stream()
+        .filter(cl -> cl.getCloudletId() == 43)
+        .forEach(cl -> Log.printlnConcat(getNow(), ": [Selector] Cloudlet #43 status=",
+        cl.getCloudletStatusString(), " finishedSoFar=", cl.getCloudletFinishedSoFar()));
+        getCloudletSubmittedList().stream()
+        .filter(cl -> cl.getCloudletId() == 43)
+        .forEach(cl -> Log.printlnConcat(getNow(), ": [Selector] Cloudlet #43 length=", cl.getCloudletLength()));
+                getCloudletSubmittedList().stream()
+        .filter(cl -> cl.getCloudletId() == 43)
+        .forEach(cl -> Log.printlnConcat(getNow(), ": [Selector] Cloudlet #43 remainingLength=", cl.getRemainingCloudletLength()));
+        Log.disable();
+
+        System.out.println("CHECKPOINT E2 - past debugging block, about to enter observeAndAct, t=" + getNow());
+
+        // Execute MAPE cycle
+        if (selected != null){ 
+            try {
+                Log.enable();
+                selected.observeAndAct(this);
+                Log.disable();
+            } catch (Exception e) {
+                e.printStackTrace(); // goes to System.err regardless of Log's enabled/disabled state
+                Log.enable();
+                Log.printlnConcat(getNow(), ": [Selector] EXCEPTION during observeAndAct: ",
+                    e.getClass().getSimpleName(), " - ", e.getMessage());
+                Log.disable();
+                throw e; // rethrow -- don't change behavior, just make it visible before it's lost
+            }
+        } else {
+            System.out.println("CHECKPOINT E3 - selected is null, observeAndAct skipped entirely, t=" + getNow());
+        }
+
+        System.out.println("CHECKPOINT F - past observeAndAct block, about to schedule next tick, t=" + getNow());
         // Schedule next observation
         schedule(getId(), observationRate, CloudActionTags.VM_BROKER_EVENT);
+        System.out.println("CHECKPOINT G - schedule() call returned, next tick should be t=" + (getNow() + observationRate));
     }
     
     /////////////////////////// HELPER METHODS ///////////////////////////////////////
@@ -1126,38 +1217,49 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         return count;
     }
     public boolean getCompletedNaturally() {return completedNaturally;}
+    public int getNumCloudletsAbandonedHostPoweredDown() {return numCloudletsAbandonedHostPoweredDown;}
+    public double getAvgHostFreeMips() { return utilizationCycleCount == 0 ? 0.0 : hostFreeMipsSum / utilizationCycleCount; }
+    public double getAvgHostFreeRam()  { return utilizationCycleCount == 0 ? 0.0 : hostFreeRamSum  / utilizationCycleCount; }
+    public double getAvgHostFreeBw()   { return utilizationCycleCount == 0 ? 0.0 : hostFreeBwSum   / utilizationCycleCount; }
+    public double getAvgVmFreeMips()   { return utilizationCycleCount == 0 ? 0.0 : vmFreeMipsSum   / utilizationCycleCount; }
 
     // Ground truth measurement — runs every cycle, independent of pipeline.
     // Single entry point for every ground-truth signal the Selector may need
     // to judge whether the assigned goal has been achieved.
     private void updateGroundTruth(){
         List<HostEntity> hosts = getAllHosts();
+        List<GuestEntity> vms = getVmList();
         updateDemandVarianceGroundTruth(hosts);
         updateResourceUtilizationGroundTruth(hosts);
+        updateHostCapacityGroundTruth(hosts);
+        updateVmCapacityGroundTruth(vms);
     }
 
     // Update the variance in demand across hosts, objectively captures current load-balance
     private void updateDemandVarianceGroundTruth(List<HostEntity> hosts){
-        double[] demands = new double[hosts.size()];
-        double mean = 0.0;
+        List<Double> demands = new ArrayList<>();
+        double sum = 0.0;
 
-        for (int i = 0; i < hosts.size(); i++) {
+        for (HostEntity host : hosts) {
+            if (isHostFailed(host) || isHostPermanentlyDead(host) || isHostPoweredDown(host)) continue;
             double usedMips = 0;
-            for (GuestEntity vm : hosts.get(i).getGuestList()) {
+            for (GuestEntity vm : host.getGuestList()) {
                 usedMips += vm.getCurrentRequestedTotalMips();
             }
-            demands[i] = usedMips / hosts.get(i).getTotalMips();
-            mean += demands[i];
+            double demand = usedMips / host.getTotalMips();
+            demands.add(demand);
+            sum += demand;
         }
 
-        mean /= hosts.size();
-        double variance = 0.0;
-        for (double d : demands) {
-            variance += (d - mean) * (d - mean);
+        if (demands.size() > 0) {
+            double mean = sum / demands.size();
+            double variance = 0.0;
+            for (double d : demands) {
+                variance += (d - mean) * (d - mean);
+            }
+            groundTruthVarianceSum += variance / demands.size();
+            groundTruthCycleCount++;
         }
-
-        groundTruthVarianceSum += variance / hosts.size();
-        groundTruthCycleCount++;
     }
 
     // Update RAM and BW util. Increment sums for later mean calculations, and compare maximums
@@ -1188,6 +1290,48 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         ramUtilizationSum += sumRamUtilThisCycle / hosts.size();
         bwUtilizationSum += sumBwUtilThisCycle / hosts.size();
         utilizationCycleCount++;
+    }
+
+    private void updateHostCapacityGroundTruth(List<HostEntity> hosts){
+
+        double sumFreeMipsThisCycle = 0, sumFreeRamThisCycle = 0, sumFreeBwThisCycle = 0;
+        int liveHosts = 0;
+
+        for (HostEntity host : hosts) {
+            if (isHostFailed(host) || isHostPermanentlyDead(host) || isHostPoweredDown(host)) continue;
+            sumFreeMipsThisCycle += getHostAvailableMips(host);
+            sumFreeRamThisCycle += getHostAvailableRam(host);
+            sumFreeBwThisCycle += getHostAvailableBw(host);
+            liveHosts++;
+        }
+
+        if (liveHosts > 0) {
+            hostFreeMipsSum += sumFreeMipsThisCycle / liveHosts;
+            hostFreeRamSum += sumFreeRamThisCycle / liveHosts;
+            hostFreeBwSum += sumFreeBwThisCycle / liveHosts;
+        }
+
+    }
+
+    private void updateVmCapacityGroundTruth(List<GuestEntity> vms){
+
+        double sumFreeMipsThisCycle = 0;
+        int countedVms = 0;
+
+        for (GuestEntity vm : vms) {
+            int peDemand = 0;
+            for (Cloudlet cl : vm.getCloudletScheduler().getCloudletExecList()) {
+                peDemand += cl.getNumberOfPes();
+            }
+            int freePes = Math.max(0, vm.getNumberOfPes() - peDemand);
+            sumFreeMipsThisCycle += freePes * vm.getMips();
+            countedVms++;
+        }
+
+        if (countedVms > 0) {
+            vmFreeMipsSum += sumFreeMipsThisCycle / countedVms;
+        }
+
     }
 
     // Switch controller based upon ground truth readings and current goals
@@ -1280,6 +1424,8 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         peakSimultaneousFailedHosts = Math.max(peakSimultaneousFailedHosts, currentFailedHostCount);
         failureStartTimeByHost.put(id, getNow());
 
+        Log.printlnConcat(getNow(), ": [Selector] Host #", targetHost.getId(), " has failed.");
+
         double repairDelay = repairDurationDist.sample();
         pendingRepairs++;
         schedule(getId(), repairDelay, CloudActionTags.HOST_REPAIR, id);
@@ -1294,7 +1440,6 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             }
         }
 
-        Log.printlnConcat(getNow(), ": [Selector] Host #", targetHost.getId(), " has failed.");
 
         Log.disable();
     }
@@ -1325,7 +1470,7 @@ public class Selector extends DatacenterBroker implements ActionSpace {
             permanentlyDeadHostIds.add(id);
 
             Log.enable();
-            Log.printlnConcat(getNow(), ": [Selector] Host #", id, " repair failed — permanently dead, evacuating.");
+            Log.printlnConcat(getNow(), ": [Selector] Host #", id, " repair failed | permanently dead, evacuating.");
             Log.disable();
 
             evacuateHost(targetHost);
@@ -1387,16 +1532,30 @@ public class Selector extends DatacenterBroker implements ActionSpace {
 
     }
 
+    // Turn host OFF.
     private void processHostPowerDown(SimEvent ev) {
 
+        Log.enable();
+
+        // Retrieve target host
         int hostId = (int) ev.getData();
         PowerHostEntity host = (PowerHostEntity) getHostById(hostId);
+
+        // Destroy hosted VMs
+        List<GuestEntity> residents = new ArrayList<>(getVmListForHost(host));
+        for (GuestEntity vm : residents) {
+            strandAndDestroyGuest(vm, true);
+        }
+
+        // Save working power model so we can turn back on later
         savedPowerModels.put(hostId, host.getPowerModel());
+        // Switch to OFF power model, no energy consumption
         host.setPowerModel(OFF_MODEL);
+        // Add to OFF list
         poweredDownHostIds.add(hostId);
 
-        Log.enable();
-        Log.printlnConcat(getNow(), ": [Selector] Host #", hostId, " powered down.");
+        Log.printlnConcat(getNow(), ": [Selector] Host #", hostId, " powered down.",
+            residents.isEmpty() ? "" : (" " + residents.size() + " VM(s) stranded."));
         Log.disable();
 
     }
@@ -1418,12 +1577,18 @@ public class Selector extends DatacenterBroker implements ActionSpace {
     // Register new batch of cloudlets for processing
     public void registerInjection(double delay, List<Cloudlet> batch) {
         injectionSchedule.add(new PendingInjection(delay, batch));
+        Log.enable();
+        Log.printlnConcat(getNow(), ": ", batch.size(), " Cloudlets to be injected at time = ", delay);
+        Log.disable();
         pendingInjections++;   // prime the mapeCycle guard immediately, before the sim even starts
     }
     
     // Register host failure
     public void registerFailure(double delay, int hostId) {
         failureSchedule.add(new PendingFailure(delay, hostId));
+        Log.enable();
+        Log.printlnConcat(getNow(), ": Host #", hostId, " set to fail at time = ", delay);
+        Log.disable();
         pendingFailures++;
     }
 
@@ -1529,6 +1694,8 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                 Log.enable();
                 Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(),
                     " could not be evacuated | no healthy host has room. Abandoning its workload.");
+                Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " exec list before cleanup: ",
+                vm.getCloudletScheduler().getCloudletExecList().stream().map(Cloudlet::getCloudletId).toList());
                 Log.disable();
 
                 List<Cloudlet> stranded = new ArrayList<>(vm.getCloudletScheduler().getCloudletExecList());
@@ -1552,6 +1719,39 @@ public class Selector extends DatacenterBroker implements ActionSpace {
                     Log.disable();
                 }
             }
+        }
+    }
+
+    // Destroy a given VM. Reused by host power down and VM destruction actions
+    private void strandAndDestroyGuest(GuestEntity vm, boolean dueToHostPowerDown) {
+
+        Integer datacenterId = getDatacenterFor(vm.getId());
+
+        List<Cloudlet> stranded = new ArrayList<>();
+        stranded.addAll(vm.getCloudletScheduler().getCloudletExecList());
+        stranded.addAll(vm.getCloudletScheduler().getCloudletWaitingList());
+        stranded.addAll(vm.getCloudletScheduler().getCloudletPausedList());
+
+        for (Cloudlet cl : stranded) {
+            vm.getCloudletScheduler().cloudletCancel(cl.getCloudletId());
+            getCloudletSubmittedList().remove(cl);
+            cloudletsSubmitted--;
+            if (dueToHostPowerDown) {
+                numCloudletsAbandonedHostPoweredDown++;
+            } else {
+                numCloudletsAbandoned++;
+            }
+            Log.enable();
+            Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
+                " abandoned | VM#", vm.getId(),
+                dueToHostPowerDown ? " was destroyed | host powered down." : " was destroyed.");
+            Log.disable();
+        }
+
+        getGuestsCreatedList().remove(vm);
+        minLiveVmCount = Math.min(minLiveVmCount, getGuestsCreatedList().size());
+        if (datacenterId != null) {
+            sendNow(datacenterId, CloudActionTags.VM_DESTROY, vm);
         }
     }
 
@@ -1638,6 +1838,17 @@ public class Selector extends DatacenterBroker implements ActionSpace {
         cloudlets.addAll(vm.getCloudletScheduler().getCloudletExecList());
         cloudlets.addAll(vm.getCloudletScheduler().getCloudletPausedList());
         return cloudlets;
+    }
+
+    private GuestEntity getVmForCloudlet(int cloudletId){
+        for (GuestEntity vm : getVmList()){
+            for (Cloudlet cl : getVmCloudletList(vm)){
+                if (getId(cl) == cloudletId){
+                    return vm;
+                }
+            }
+        }
+        return null;
     }
 
 }    
