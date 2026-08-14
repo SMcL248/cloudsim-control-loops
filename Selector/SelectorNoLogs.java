@@ -37,35 +37,77 @@ import org.cloudbus.cloudsim.core.PowerHostEntity;
  
 public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
 
-    private final List<ControlUnit> controllers;
-    private ControlUnit selected;
-    private PowerDatacenter cachedDatacenter;
-    private final int observationRate;
-    private final int[] mipsTiers;
+    private final List<ControlUnit> controllers;// Set of available controllers
+    private ControlUnit selected;// Controller in use
+    private PowerDatacenter cachedDatacenter;// The datacenter object
+    private final int observationRate;// Time between observations
+    private final int[] mipsTiers;// MIPS tiers (small, medium, large)
 
-    private final boolean SWITCHABLE = false;
-    private boolean vmAllocationLogged = false;
-    private boolean initialAbandonSweepDone = false;
-    private boolean completedNaturally = false;
+    private final boolean SWITCHABLE = false;// Can we switch controllers?
+    private boolean vmAllocationLogged = false;// Have we logged the host to VM allocations?
+    private boolean initialAbandonSweepDone = false;// Have we handled Cloudlets that could not be assigned?
+    private boolean completedNaturally = false;// Did we crash or timeout?
 
+    // Utilisation (RAM, MIPS, BW) averages and variances
     private double groundTruthVarianceSum = 0.0;
+    private double ramUtilVarianceSum = 0.0;
+    private double bwUtilVarianceSum = 0.0;
+    private double mipsUtilVarianceSum = 0.0;
+    private int hostUtilVarianceCycleCount = 0;
+
+    private double vmMipsUtilVarianceSum = 0.0;
+    private int vmUtilVarianceCycleCount = 0;
     private double peakBwUtilization;
     private double peakRamUtilization;
+    private double peakMipsUtilization;
+    private double peakStorageUtilization;
     private double bwUtilizationSum;
     private double ramUtilizationSum;
+    private double mipsUtilizationSum;
+    private double storageUtilizationSum;
+    private double storageUtilVarianceSum = 0.0;
+    private double peakVmMipsUtilization;
+    private double vmMipsUtilizationSum;
     private int utilizationCycleCount;
     private int groundTruthCycleCount = 0;
 
+    // Headroom sums
     private double hostFreeMipsSum;
+    private double hostFreeStorageSum;
     private double hostFreeRamSum;
     private double hostFreeBwSum;
     private double vmFreeMipsSum;
 
+    private double energyExpelledRunningTotal = 0;
+    private double workCompleteRunningTotal = 0;
+    private double cloudletsAbandonedRunningTotal = 0;
+    private double abandonedWorkProcessed = 0;
+
+    // Energy expelled, work completed and cloudlets abandoned between each observation
+    private List<Double> energyExpelledReadings = new ArrayList<>();
+    private List<Double> workCompleteReadings = new ArrayList<>();
+    private List<Double> cloudletsAbandonedReadings = new ArrayList<>();
+    private List<Double> demandVarianceReadings = new ArrayList<>();
+    private List<Double> ramUtilReadings = new ArrayList<>();
+    private List<Double> bwUtilReadings = new ArrayList<>();
+    private List<Double> mipsUtilReadings = new ArrayList<>();
+    private List<Double> storageUtilReadings = new ArrayList<>();
+    private List<Double> vmMipsUtilReadings = new ArrayList<>();
+    private List<Double> ramUtilVarianceReadings = new ArrayList<>();
+    private List<Double> bwUtilVarianceReadings = new ArrayList<>();
+    private List<Double> mipsUtilVarianceReadings = new ArrayList<>();
+    private List<Double> storageUtilVarianceReadings = new ArrayList<>();
+    private List<Double> vmMipsUtilVarianceReadings = new ArrayList<>();
+    private List<Double> hostFreeMipsReadings = new ArrayList<>();
+    private List<Double> hostFreeRamReadings = new ArrayList<>();
+    private List<Double> hostFreeBwReadings = new ArrayList<>();
+    private List<Double> vmFreeMipsReadings = new ArrayList<>();
+
     public static boolean suppressDebugLogging = false;
 
-    private int pendingInjections = 0;
-    private int pendingFailures = 0;
-    private int pendingRepairs = 0;
+    private int pendingInjections = 0;// Workloads yet to be allocated
+    private int pendingFailures = 0;// Host failures yet to occur
+    private int pendingRepairs = 0;// Failed hosts yet to be repaired
     private final List<PendingInjection> injectionSchedule = new ArrayList<>();  // (delay, batch) pairs
     private final List<PendingFailure> failureSchedule = new ArrayList<>();  // (delay, id) pairs
     private final LognormalDistr repairDurationDist;
@@ -77,12 +119,18 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
     private double totalDowntime = 0.0;
     private int currentFailedHostCount = 0;
     private int peakSimultaneousFailedHosts = 0;
-    private final Map<Integer, Double> failureStartTimeByHost = new HashMap<>();
     private int numCloudletsDeferred = 0;
     private int numCloudletsAbandoned = 0;
     private int numCloudletsAbandonedHostPoweredDown = 0;
+    private int numCloudletsAbandonedVmNeverCreated = 0;   // sweepAbandonedCloudlets + admitCloudlets "vm==null"
+    private int numCloudletsAbandonedHostDead = 0;          // admitCloudlets, target host permanently dead
+    private int numCloudletsAbandonedEvacuationFailed = 0;  // evacuateHost, no healthy destination found
+    private int numCloudletsAbandonedVmDestroyed = 0;       // strandAndDestroyGuest, deliberate requestVmDestruction
+    private int numSubmittedCloudletsAbandoned = 0;
+    private int numActionsSucceededOnFailedHost = 0;
     private double totalDeferredWaitTime = 0.0;
     private int minLiveVmCount = Integer.MAX_VALUE;
+    private final Map<Integer, Double> failureStartTimeByHost = new HashMap<>();
     private final Map<Integer, Double> deferralStartTimeByCloudlet = new HashMap<>();
     private final Set<Integer> permanentlyDeadHostIds = new HashSet<>();
     private final Set<Integer> exposedCloudletIds = new HashSet<>();
@@ -134,12 +182,12 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         this.repairDurationDist = repairDurationDist;
         this.unrecoverableRng = unrecoverableRng;
     }
- 
+
     ////////////////////// Overridden methods from DatacenterBroker ////////////////////////////
- 
+
     @Override
     // Recieves event tag and directs to corresponding method
-	public void processEvent(SimEvent ev) {
+    public void processEvent(SimEvent ev) {
 		CloudSimTags tag = ev.getTag();
         // Resource characteristics request
         if (tag == CloudActionTags.RESOURCE_CHARACTERISTICS_REQUEST) {
@@ -172,7 +220,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         } else if (tag == CloudActionTags.END_OF_SIMULATION) {
             if (pendingInjections == 0 && pendingFailures == 0 && pendingRepairs == 0
                 && getCloudletList().isEmpty()
-                && getCloudletSubmittedList().size() == getCloudletReceivedList().size()) {
+                && getCloudletSubmittedList().size() - numSubmittedCloudletsAbandoned == getCloudletReceivedList().size()) {
                 shutdownEntity();
             }
 
@@ -299,27 +347,19 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
     }
 
     @Override
-    // Request VM MIPS rating adjustment
+    // Alter MIPS rating of the given VM.
     public boolean requestMipsScaling(GuestEntity vm, double newMips) {
 
         if (!(vm instanceof Vm)) {
             return false;
         }
 
-        if (isHostFailed(vm.getHost())) {
-            //Log.enable();
-            Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " host is failed, action ignored.");
-            Log.disable();
-            return false;
-        }
+        boolean targetHostFailed = isHostFailed(vm.getHost()) || isHostPermanentlyDead(vm.getHost());
 
-        double peMips = getHostCapacity(vm);
-        // Ensure host PE can support new MIPS rating, if not, will scale to original value.
-        double boundedMips = Math.min(newMips, peMips);
 
         List<Double> newMipsShare = new ArrayList<>();
         for (int i = 0; i < vm.getNumberOfPes(); i++) {
-            newMipsShare.add(boundedMips);
+            newMipsShare.add(newMips);
         }
 
         Host host = vm.getHost();
@@ -341,15 +381,20 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
             }
             scheduler.allocatePesForGuest(vm, originalShare);
 
-            //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] FAILED.");
             Log.disable();
 
             return false;
         }
 
-        ((Vm) vm).setMips(boundedMips);
+        ((Vm) vm).setMips(newMips);
         vm.getCloudletScheduler().updateCloudletsProcessing(getNow(), newMipsShare);
+
+        if (targetHostFailed) {
+            numActionsSucceededOnFailedHost++;
+            Log.printlnConcat(getNow(), ": [Selector] requestMipsScaling succeeded against a failed/dead host — VM#", vm.getId());
+            Log.disable();
+        }
 
         return true;
 
@@ -363,49 +408,46 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         return false;
         }
 
-        if (isHostFailed(vm.getHost())) {
-            //Log.enable();
-            Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " host is failed, action ignored.");
-            //Log.disable();
-            return false;
-        }
+        boolean targetHostFailed = isHostFailed(vm.getHost()) || isHostPermanentlyDead(vm.getHost());
 
         HostEntity host = vm.getHost();
         double peMips = vm.getMips();
 
-
         List<Double> currentShare = host.getGuestScheduler().getAllocatedMipsForGuest(vm);
         if (currentShare == null) {
-            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestPeAllocation] VM#", vm.getId(), " no current allocation found, aborting");
-            //Log.disable();
+            Log.disable();
             return false;
         }
+
         List<Double> newShare = new ArrayList<>(currentShare);
         newShare.add(peMips);
 
-
         host.getGuestScheduler().deallocatePesForGuest(vm);
         boolean success = host.getGuestScheduler().allocatePesForGuest(vm, newShare);
-        //Log.enable();
+
         Log.printlnConcat(getNow(), ": [requestPeScaling] VM#", vm.getId(),
             " success=", success, " requestedShareSize=", newShare.size(),
             " availableMipsAfter=", host.getGuestScheduler().getAvailableMips());
-        //Log.disable();
+        Log.disable();
 
         if (success) {
             ((Vm) vm).setNumberOfPes(vm.getNumberOfPes() + 1);
             vm.getCloudletScheduler().updateCloudletsProcessing(getNow(), newShare);
-            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestPeScaling] VM#", vm.getId(), " numberOfPes now=", vm.getNumberOfPes());
-            //Log.disable();
+            Log.disable();
+            if (targetHostFailed) {
+                numActionsSucceededOnFailedHost++;
+                Log.printlnConcat(getNow(), ": [Selector] requestPeAllocation succeeded against a failed/dead host — VM#", vm.getId());
+                Log.disable();
+            }
         } else {
-        // Insufficient host capacity for the extra PE -- restore the VM's original
+            // Insufficient host capacity for the extra PE -- restore the VM's original
+            // share rather than leaving it deallocated.
             host.getGuestScheduler().allocatePesForGuest(vm, currentShare);
-            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestPeScaling] VM#", vm.getId(),
                 " FAILED to add PE -- insufficient host capacity, original allocation restored.");
-            //Log.disable();
+            Log.disable();
             return false;
         }
 
@@ -421,84 +463,68 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         return false;
         }
 
-        if (isHostFailed(vm.getHost())) {
-            //Log.enable();
-            Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " host is failed, action ignored.");
-            //Log.disable();
-            return false;
-        }
+        boolean targetHostFailed = isHostFailed(vm.getHost()) || isHostPermanentlyDead(vm.getHost());
 
         HostEntity host = vm.getHost();
         double peMips = vm.getMips();
 
         List<Double> currentShare = host.getGuestScheduler().getAllocatedMipsForGuest(vm);
-
         if (currentShare == null) {
-            //Log.enable();
-            Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(), " no current allocation found, aborting");
-            //Log.disable();
-            return false;
-        }
-
-        if (currentShare.size() > 1){
-
-            List<Double> newShare = new ArrayList<>(currentShare);
-
-            boolean removed = newShare.remove(peMips);
-
-            if (!removed) {
-                //Log.enable();
-                Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(),
-                    " no matching peMips entry found, aborting");
-                //Log.disable();
-                return false;
-            }
-
-            host.getGuestScheduler().deallocatePesForGuest(vm);
-
-            boolean success = host.getGuestScheduler().allocatePesForGuest(vm, newShare);
-            //Log.enable();
-            Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(),
-                " success=", success, " requestedShareSize=", newShare.size(),
-                " availableMipsAfter=", host.getGuestScheduler().getAvailableMips());
-            //Log.disable();
-
-            if (success) {
-                ((Vm) vm).setNumberOfPes(vm.getNumberOfPes() - 1);
-                vm.getCloudletScheduler().updateCloudletsProcessing(getNow(), newShare);
-                //Log.enable();
-                Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(), " numberOfPes now=", vm.getNumberOfPes());
-                //Log.disable();
-            } else {
-                host.getGuestScheduler().allocatePesForGuest(vm, currentShare);
-                //Log.enable();
-                Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(),
-                    " FAILED -- insufficient host capacity, original allocation restored.");
-                //Log.disable();
-                return false;
-            }
-
-            return success;
-
-        }else{
-            //Log.enable();
-            Log.printlnConcat(getNow(), ": [requestPeDeallocation] Unable to deallocate a PE from VM#", vm.getId());
+            Log.printlnConcat(getNow(), ": [requestPeAllocation] VM#", vm.getId(),
+                " FIRST TIME no current allocation found -- lost host-level PE allocation somewhere before this point, aborting");
             Log.disable();
             return false;
         }
+
+        List<Double> newShare = new ArrayList<>(currentShare);
+ 
+        boolean removed = newShare.remove(peMips);
+ 
+        if (!removed) {
+            Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(),
+                " no matching peMips entry found, aborting");
+            Log.disable();
+            return false;
+        }
+ 
+        host.getGuestScheduler().deallocatePesForGuest(vm);
+ 
+        boolean success = host.getGuestScheduler().allocatePesForGuest(vm, newShare);
+        Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(),
+            " success=", success, " requestedShareSize=", newShare.size(),
+            " availableMipsAfter=", host.getGuestScheduler().getAvailableMips());
+        Log.disable();
+ 
+        if (success) {
+            ((Vm) vm).setNumberOfPes(vm.getNumberOfPes() - 1);
+            vm.getCloudletScheduler().updateCloudletsProcessing(getNow(), newShare);
+            Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(), " numberOfPes now=", vm.getNumberOfPes());
+            Log.disable();
+            if (targetHostFailed) {
+                numActionsSucceededOnFailedHost++;
+                // Log.enable();
+                Log.printlnConcat(getNow(), ": [Selector] requestPeDeallocation succeeded against a failed/dead host — VM#", vm.getId());
+                Log.disable();
+            }
+        } else {
+            host.getGuestScheduler().allocatePesForGuest(vm, currentShare);
+            Log.printlnConcat(getNow(), ": [requestPeDeallocation] VM#", vm.getId(),
+                " FAILED -- insufficient host capacity, original allocation restored.");
+            Log.disable();
+            return false;
+        }
+ 
+        return success;
 
     }
 
     @Override
     // Adjust RAM of VM
     public boolean requestRamScaling(GuestEntity vm, double newRam) {
+
         if (!(vm instanceof Vm)) return false;
-        if (isHostFailed(vm.getHost())) {
-            //Log.enable();
-            Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " host is failed, action ignored.");
-            Log.disable();
-            return false;
-        }
+
+        boolean targetHostFailed = isHostFailed(vm.getHost()) || isHostPermanentlyDead(vm.getHost());
 
         HostEntity host = vm.getHost();
         int originalRam = vm.getRam();
@@ -515,10 +541,15 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
             // actual allocation ourselves.
             ((Vm) vm).setRam(originalRam);
             host.getGuestRamProvisioner().allocateRamForGuest(vm, originalRam);
-            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestRamScaling] VM#", vm.getId(), " FAILED.");
             Log.disable();
             return false;
+        }
+
+        if (targetHostFailed) {
+            numActionsSucceededOnFailedHost++;
+            Log.printlnConcat(getNow(), ": [Selector] requestRamScaling succeeded against a failed/dead host — VM#", vm.getId());
+            Log.disable();
         }
 
         return true;
@@ -527,13 +558,10 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
     @Override
     // Adjust BW of VM
     public boolean requestBwScaling(GuestEntity vm, double newBw) {
+
         if (!(vm instanceof Vm)) return false;
-        if (isHostFailed(vm.getHost())) {
-            //Log.enable();
-            Log.printlnConcat(getNow(), ": [Selector] VM#", vm.getId(), " host is failed, action ignored.");
-            Log.disable();
-            return false;
-        }
+        
+        boolean targetHostFailed = isHostFailed(vm.getHost()) || isHostPermanentlyDead(vm.getHost());
 
         HostEntity host = vm.getHost();
         long requestedBw = (long) newBw;
@@ -544,9 +572,13 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
 
         if (success) {
             ((Vm) vm).setBw(requestedBw);
+            if (targetHostFailed) {
+                numActionsSucceededOnFailedHost++;
+                Log.printlnConcat(getNow(), ": [Selector] requestBwScaling succeeded against a failed/dead host — VM#", vm.getId());
+                Log.disable();
+            }
             return true;
         } else {
-            //Log.enable();
             Log.printlnConcat(getNow(), ": [requestBwScaling] VM#", vm.getId(), " FAILED.");
             Log.disable();
             return false;
@@ -603,7 +635,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
     // Request to turn off the given host (losing any assigned VMs and workloads)
     public void requestHostPowerDown(HostEntity host){
 
-        Log.enable();
+        //Log.enable();
 
         if(isHostPoweredDown(host)){
             Log.printlnConcat(getNow(), ": [Selector] Cannot power down Host #", host.getId(), " | Host already powered down.");
@@ -671,7 +703,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
     }
  
     @Override
-    // Get the ID of the controller
+    // Get the ID of the Selector (CloudSim Broker)
     public int getUserId() {
         return getId();
     }
@@ -683,39 +715,54 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
     }
  
     @Override
-    // Retreive the current time
+    // Retreive the current CloudSim time
     public double getNow(){
         return CloudSim.clock();
     }
  
-    // Retrieve our defined MIPS tiers.
+    // Retrieve possible VM MIPS tiers.
     @Override
     public int[] getMipsTiers(){
         return Arrays.copyOf(mipsTiers, mipsTiers.length);
     }
 
-    //Retrieve the MIPS rating of cores on the host of the given VM.
+    //Retrieve the MIPS rating per core on the host of the given VM.
     @Override
     public double getHostCapacity(GuestEntity vm) {
         return vm.getHost().getGuestScheduler().getPeCapacity();
     }
 
-    // Does the host of the given VM have an unused PE.
+    @Override 
+    public double getHostMipsPerPe(HostEntity host){
+        return host.getTotalMips()/host.getNumberOfPes();
+    }
+
+    @Override
+    public int getHostPeCount(HostEntity host){
+        return host.getNumberOfPes();
+    }
+
+    // Does the given host have an unused PE?
     @Override 
     public boolean hostHasFreePe(HostEntity host){
         return host.getGuestScheduler().getAvailableMips() >= host.getGuestScheduler().getPeCapacity();
     }
 
-    // Has this host failed? i.e. is processing paused
+    // Has the given host failed? i.e. is processing paused?
     @Override
     public boolean isHostFailed(HostEntity host) {
         return host.isFailed();
     }
 
-    // Has this host been deemed unrepairable
+    // Has the given host been deemed unrepairable?
     @Override
     public boolean isHostPermanentlyDead(HostEntity host) {
         return permanentlyDeadHostIds.contains(host.getId());
+    }
+
+    @Override
+    public int getNumberCloudletsAbandoned(){
+        return numCloudletsAbandoned;
     }
 
     // Get a VM object by its ID
@@ -729,7 +776,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         return null;
     }
 
-    // Get a Hoat object by its ID
+    // Get a Host object by its ID
     @Override
     public HostEntity getHostById(int hostId){
         List<HostEntity> hosts = getAllHosts();
@@ -753,26 +800,31 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         return -1.0; // already at top tier, or MIPS doesn't match a known tier
     }
 
+    // Retrieve RAM headroom of the given host
     @Override
     public double getHostAvailableRam(HostEntity host) {
         return host.getGuestRamProvisioner().getAvailableRam();
     }
 
+    // Retrieve BW headroom of the given host
     @Override
     public double getHostAvailableBw(HostEntity host) {
         return host.getGuestBwProvisioner().getAvailableBw();
     }
 
+    // Retrieve total RAM of the given host
     @Override
     public double getHostTotalRam(HostEntity host) {
         return host.getRam();
     }
 
+    // Retrieve total RAM of the given host
     @Override
     public double getHostTotalBw(HostEntity host) {
         return host.getBw();
     }
 
+    // Retrieve total MIPS of the given host.
     @Override
     public double getHostTotalMips(HostEntity host) {
         return host.getTotalMips();
@@ -1006,6 +1058,11 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
     }
 
     @Override
+    public double getTotalWorkProcessedSoFar() {
+        return workCompleteRunningTotal;
+    }
+
+    @Override
     public boolean isHostPoweredDown(HostEntity host){
         return poweredDownHostIds.contains(host.getId());
     }
@@ -1088,26 +1145,30 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
 
         sweepAbandonedCloudlets();
 
-        // Print VM Allocation
+        // Debugging: Print VM Allocation 
+        // Will always fire upon first observation
+        // Insert further log times in condition, must be divisible by observation rate (100 by default).
         if (!vmAllocationLogged || getNow() == 1000000) { 
             logVmAllocation(this); 
             vmAllocationLogged = true; 
         }
 
-        // Quit if we have finished Cloudlet workload
+        // Quit if we have finished Cloudlet workload.
         if (pendingInjections == 0 
             && pendingFailures == 0
             && pendingRepairs == 0
             && getCloudletList().isEmpty() 
-            && getCloudletSubmittedList().size() == getCloudletReceivedList().size()) {
+            && getCloudletSubmittedList().size() - numSubmittedCloudletsAbandoned == getCloudletReceivedList().size()) {
             completedNaturally = true;
             return; 
         }
 
-        updateGroundTruth();
+        // Update Knowledge base
+        updateKnowledge();
+        // Change controller (if permitted and deemed necessary)
         updateSelected(); 
 
-        // Execute MAPE cycle
+        // Given a controller, execute its MAPE cycle
         if (selected != null){
             selected.observeAndAct(this);
         }
@@ -1127,8 +1188,16 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
     public double getGroundTruthAvgVariance() {return groundTruthCycleCount == 0 ? 0.0 : groundTruthVarianceSum / groundTruthCycleCount; }
     public double getPeakRamUtilization() { return peakRamUtilization; }
     public double getPeakBwUtilization() { return peakBwUtilization; }
+    public double getPeakMipsUtilization() { return peakMipsUtilization; }
     public double getAvgRamUtilization() { return utilizationCycleCount == 0 ? 0.0 : ramUtilizationSum / utilizationCycleCount; }
     public double getAvgBwUtilization() { return utilizationCycleCount == 0 ? 0.0 : bwUtilizationSum / utilizationCycleCount; }
+    public double getAvgMipsUtilization() { return utilizationCycleCount == 0 ? 0.0 : mipsUtilizationSum / utilizationCycleCount; }
+    public double getAvgVmMipsUtilization() { return utilizationCycleCount == 0 ? 0.0 : vmMipsUtilizationSum / utilizationCycleCount; }
+    public double getPeakVmMipsUtilization() { return peakVmMipsUtilization; }
+    public double getAvgHostRamUtilVariance()  { return hostUtilVarianceCycleCount == 0 ? 0.0 : ramUtilVarianceSum  / hostUtilVarianceCycleCount; }
+    public double getAvgHostBwUtilVariance()   { return hostUtilVarianceCycleCount == 0 ? 0.0 : bwUtilVarianceSum   / hostUtilVarianceCycleCount; }
+    public double getAvgHostMipsUtilVariance() { return hostUtilVarianceCycleCount == 0 ? 0.0 : mipsUtilVarianceSum / hostUtilVarianceCycleCount; }
+    public double getAvgVmMipsUtilVariance()   { return vmUtilVarianceCycleCount == 0 ? 0.0 : vmMipsUtilVarianceSum / vmUtilVarianceCycleCount; }
     public int getNumCloudletsAbandoned() { return numCloudletsAbandoned; }
     public int getCloudletsStillInFlight() { return cloudletsSubmitted; }
     public int getNumCloudletsStillDeferred() { return deferralStartTimeByCloudlet.size(); }
@@ -1142,26 +1211,50 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
     }
     public boolean getCompletedNaturally(){return completedNaturally;}
     public int getNumCloudletsAbandonedHostPoweredDown() {return numCloudletsAbandonedHostPoweredDown;}
+    public int getNumCloudletsAbandonedVmNeverCreated() { return numCloudletsAbandonedVmNeverCreated; }
+    public int getNumCloudletsAbandonedHostDead() { return numCloudletsAbandonedHostDead; }
+    public int getNumCloudletsAbandonedEvacuationFailed() { return numCloudletsAbandonedEvacuationFailed; }
+    public int getNumCloudletsAbandonedVmDestroyed() { return numCloudletsAbandonedVmDestroyed; }
+    public int getNumActionsSucceededOnFailedHost() { return numActionsSucceededOnFailedHost; }
     public double getAvgHostFreeMips() { return utilizationCycleCount == 0 ? 0.0 : hostFreeMipsSum / utilizationCycleCount; }
+    public double getAvgHostFreeStorage() { return utilizationCycleCount == 0 ? 0.0 : hostFreeStorageSum / utilizationCycleCount; }
+    public double getAvgStorageUtilization() { return utilizationCycleCount == 0 ? 0.0 : storageUtilizationSum / utilizationCycleCount; }
+    public double getPeakStorageUtilization() { return peakStorageUtilization; }
+    public double getAvgHostStorageUtilVariance() { return hostUtilVarianceCycleCount == 0 ? 0.0 : storageUtilVarianceSum / hostUtilVarianceCycleCount; }
     public double getAvgHostFreeRam()  { return utilizationCycleCount == 0 ? 0.0 : hostFreeRamSum  / utilizationCycleCount; }
     public double getAvgHostFreeBw()   { return utilizationCycleCount == 0 ? 0.0 : hostFreeBwSum   / utilizationCycleCount; }
     public double getAvgVmFreeMips()   { return utilizationCycleCount == 0 ? 0.0 : vmFreeMipsSum   / utilizationCycleCount; }
-
+    public double getAbandonedWorkProcessed() {return abandonedWorkProcessed;}
+    public List<Double> getWorkPerCycle() { return workCompleteReadings;}
+    public List<Double> getEnergyPerCycle() { return energyExpelledReadings;}
 
     /////////////////////// PRIVATE SELECTOR METHODS /////////////////////////////
-    /// 
-    // Ground truth measurement — runs every cycle, independent of pipeline.
+    
+    // Updtae key system metris — runs every cycle, independent of pipeline.
     // Single entry point for every ground-truth signal the Selector may need
     // to judge whether the assigned goal has been achieved.
-    private void updateGroundTruth(){
+    private void updateKnowledge(){
+
         List<HostEntity> hosts = getAllHosts();
         List<GuestEntity> vms = getVmList();
-        updateDemandVarianceGroundTruth(hosts);
-        updateResourceUtilizationGroundTruth(hosts);
+
+        updateDemandVarianceGroundTruth(hosts);//may be defunct
+
+        // Average host and VM resource utilisation
+        updateHostResourceUtilizationGroundTruth(hosts);
+        updateVmResourceUtilizationGroundTruth(vms);
+        // Average host and VM resource headroom
         updateHostCapacityGroundTruth(hosts);
         updateVmCapacityGroundTruth(vms);
-    }
+        // Variance in host and VM resource utilisation
+        updateHostUtilizationVarianceGroundTruth(hosts);
+        updateVmUtilizationVarianceGroundTruth(vms);
+        // Key metrics 
+        updateEnergyExpelledReadings(getDatacenter());
+        updateWorkCompletedReadings(vms);
+        updateCloudletsAbandonded();
 
+    }
 
     // Update the variance in demand across hosts, objectively captures current load-balance
     private void updateDemandVarianceGroundTruth(List<HostEntity> hosts){
@@ -1187,42 +1280,194 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
             }
             groundTruthVarianceSum += variance / demands.size();
             groundTruthCycleCount++;
+            demandVarianceReadings.add(variance / demands.size());
         }
+
+        
     }
 
-    // Update RAM and BW util. Increment sums for later mean calculations, and compare maximums
-    private void updateResourceUtilizationGroundTruth(List<HostEntity> hosts){
-        double maxRamUtilThisCycle = 0, maxBwUtilThisCycle = 0;
-        double sumRamUtilThisCycle = 0, sumBwUtilThisCycle = 0;
+
+    private void updateHostResourceUtilizationGroundTruth(List<HostEntity> hosts){
+
+        double maxRamUtilThisCycle = 0, maxBwUtilThisCycle = 0, maxMipsUtilThisCycle = 0, maxStorageUtilThisCycle = 0;
+        double sumRamUtilThisCycle = 0, sumBwUtilThisCycle = 0, sumMipsUtilThisCycle = 0, sumStorageUtilThisCycle = 0;
+        int liveHosts = 0;
 
         for (HostEntity host : hosts) {
-            double hostRamUsed = 0, hostBwUsed = 0;
+            if (isHostFailed(host) || isHostPermanentlyDead(host) || isHostPoweredDown(host)) continue;
+
+            double hostRamUsed = 0, hostBwUsed = 0, hostMipsUsed = 0, hostStorageUsed = 0;
             for (GuestEntity vm : host.getGuestList()) {
                 hostRamUsed += vm.getRam();
                 hostBwUsed += vm.getBw();
+                hostMipsUsed += vm.getTotalMips();
+                hostStorageUsed += vm.getSize();
             }
             double hostRamUtil = hostRamUsed / host.getRam();
             double hostBwUtil = hostBwUsed / host.getBw();
+            double hostMipsUtil = hostMipsUsed / host.getTotalMips();
+            double hostStorageUtil = hostStorageUsed / (hostStorageUsed + host.getStorage());
 
             maxRamUtilThisCycle = Math.max(maxRamUtilThisCycle, hostRamUtil);
             maxBwUtilThisCycle = Math.max(maxBwUtilThisCycle, hostBwUtil);
+            maxMipsUtilThisCycle = Math.max(maxMipsUtilThisCycle, hostMipsUtil);
+            maxStorageUtilThisCycle = Math.max(maxStorageUtilThisCycle, hostStorageUtil);
             sumRamUtilThisCycle += hostRamUtil;
             sumBwUtilThisCycle += hostBwUtil;
+            sumMipsUtilThisCycle += hostMipsUtil;
+            sumStorageUtilThisCycle += hostStorageUtil;
+            liveHosts++;
         }
 
-        // Peak = the single worst host, at its worst moment across the whole run
-        peakRamUtilization = Math.max(peakRamUtilization, maxRamUtilThisCycle);
-        peakBwUtilization = Math.max(peakBwUtilization, maxBwUtilThisCycle);
+        if (liveHosts > 0) {
+            // Peak = the single worst host, at its worst moment across the whole run
+            peakRamUtilization = Math.max(peakRamUtilization, maxRamUtilThisCycle);
+            peakBwUtilization = Math.max(peakBwUtilization, maxBwUtilThisCycle);
+            peakMipsUtilization = Math.max(peakMipsUtilization, maxMipsUtilThisCycle);
+            peakStorageUtilization = Math.max(peakStorageUtilization, maxStorageUtilThisCycle);
 
-        // Average = mean across hosts this cycle, averaged again across cycles
-        ramUtilizationSum += sumRamUtilThisCycle / hosts.size();
-        bwUtilizationSum += sumBwUtilThisCycle / hosts.size();
-        utilizationCycleCount++;
+            // Average = mean across live hosts this cycle, averaged again across cycles
+            ramUtilizationSum += sumRamUtilThisCycle / liveHosts;
+            bwUtilizationSum += sumBwUtilThisCycle / liveHosts;
+            mipsUtilizationSum += sumMipsUtilThisCycle / liveHosts;
+            storageUtilizationSum += sumStorageUtilThisCycle / liveHosts;
+            utilizationCycleCount++;
+
+            ramUtilReadings.add(sumRamUtilThisCycle / liveHosts);
+            bwUtilReadings.add(sumBwUtilThisCycle / liveHosts);
+            mipsUtilReadings.add(sumMipsUtilThisCycle / liveHosts);
+            storageUtilReadings.add(sumStorageUtilThisCycle / liveHosts);
+        }
     }
 
+    // Update VM MIPS util
+    private void updateVmResourceUtilizationGroundTruth(List<GuestEntity> vms){
+
+        double sumMipsUtilThisCycle = 0, maxMipsUtilThisCycle = 0;
+        int countedVms = 0;
+
+        for (GuestEntity vm : vms) {
+            int peDemand = 0;
+            for (Cloudlet cl : vm.getCloudletScheduler().getCloudletExecList()) {
+                peDemand += cl.getNumberOfPes();
+            }
+            double vmMipsUtil = peDemand / (double) vm.getNumberOfPes();
+            sumMipsUtilThisCycle += vmMipsUtil;
+            maxMipsUtilThisCycle = Math.max(maxMipsUtilThisCycle, vmMipsUtil);
+            countedVms++;
+        }
+
+        if (countedVms > 0) {
+            vmMipsUtilizationSum += sumMipsUtilThisCycle / countedVms;
+            peakVmMipsUtilization = Math.max(peakVmMipsUtilization, maxMipsUtilThisCycle);
+        }
+
+        vmMipsUtilReadings.add(sumMipsUtilThisCycle / countedVms);
+
+    }
+
+    // Update the variance in RAM/BW/MIPS utilization across hosts -- captures allocation
+    // imbalance independent of the average level (updateResourceUtilizationGroundTruth).
+    // Excludes dead/failed/powered-down hosts, same as updateDemandVarianceGroundTruth --
+    // an evacuated host reads as 0% utilized, which is an artifact, not real spread.
+    
+    private void updateHostUtilizationVarianceGroundTruth(List<HostEntity> hosts){
+
+        List<Double> ramUtils = new ArrayList<>();
+        List<Double> bwUtils = new ArrayList<>();
+        List<Double> mipsUtils = new ArrayList<>();
+        List<Double> storageUtils = new ArrayList<>();
+        double ramSum = 0.0, bwSum = 0.0, mipsSum = 0.0, storageSum = 0.0;
+
+        for (HostEntity host : hosts) {
+            if (isHostFailed(host) || isHostPermanentlyDead(host) || isHostPoweredDown(host)) continue;
+
+            double hostRamUsed = 0, hostBwUsed = 0, hostMipsUsed = 0, hostStorageUsed = 0;
+            for (GuestEntity vm : host.getGuestList()) {
+                hostRamUsed += vm.getRam();
+                hostBwUsed += vm.getBw();
+                hostMipsUsed += vm.getTotalMips();
+                hostStorageUsed += vm.getSize();
+            }
+
+            double ramUtil = hostRamUsed / host.getRam();
+            double bwUtil = hostBwUsed / host.getBw();
+            double mipsUtil = hostMipsUsed / host.getTotalMips();
+            double storageUtil = hostStorageUsed / (hostStorageUsed + host.getStorage());
+
+            ramUtils.add(ramUtil);
+            bwUtils.add(bwUtil);
+            mipsUtils.add(mipsUtil);
+            storageUtils.add(storageUtil);
+            ramSum += ramUtil;
+            bwSum += bwUtil;
+            mipsSum += mipsUtil;
+            storageSum += storageUtil;
+        }
+
+        if (ramUtils.size() > 0) {
+            double ramMean = ramSum / ramUtils.size();
+            double bwMean = bwSum / bwUtils.size();
+            double mipsMean = mipsSum / mipsUtils.size();
+            double storageMean = storageSum / storageUtils.size();
+
+            double ramVariance = 0.0, bwVariance = 0.0, mipsVariance = 0.0, storageVariance = 0.0;
+            for (int i = 0; i < ramUtils.size(); i++) {
+                ramVariance += (ramUtils.get(i) - ramMean) * (ramUtils.get(i) - ramMean);
+                bwVariance += (bwUtils.get(i) - bwMean) * (bwUtils.get(i) - bwMean);
+                mipsVariance += (mipsUtils.get(i) - mipsMean) * (mipsUtils.get(i) - mipsMean);
+                storageVariance += (storageUtils.get(i) - storageMean) * (storageUtils.get(i) - storageMean);
+            }
+
+            ramUtilVarianceSum += ramVariance / ramUtils.size();
+            bwUtilVarianceSum += bwVariance / bwUtils.size();
+            mipsUtilVarianceSum += mipsVariance / mipsUtils.size();
+            storageUtilVarianceSum += storageVariance / storageUtils.size();
+            hostUtilVarianceCycleCount++;
+
+            ramUtilVarianceReadings.add(ramVariance / ramUtils.size());
+            bwUtilVarianceReadings.add(bwVariance / bwUtils.size());
+            mipsUtilVarianceReadings.add(mipsVariance / mipsUtils.size());
+            storageUtilVarianceReadings.add(storageVariance / storageUtils.size());
+        }
+
+    }
+
+    // Update the variance in MIPS utilization across VMs -- captures whether individual
+    // VMs are unevenly loaded relative to their own allocated capacity, independent of the
+    // fleet-wide average (updateVmResourceUtilizationGroundTruth).
+    private void updateVmUtilizationVarianceGroundTruth(List<GuestEntity> vms){
+
+        List<Double> mipsUtils = new ArrayList<>();
+        double sum = 0.0;
+
+        for (GuestEntity vm : vms) {
+            int peDemand = 0;
+            for (Cloudlet cl : vm.getCloudletScheduler().getCloudletExecList()) {
+                peDemand += cl.getNumberOfPes();
+            }
+            double vmMipsUtil = peDemand / (double) vm.getNumberOfPes();
+            mipsUtils.add(vmMipsUtil);
+            sum += vmMipsUtil;
+        }
+
+        if (mipsUtils.size() > 0) {
+            double mean = sum / mipsUtils.size();
+            double variance = 0.0;
+            for (double u : mipsUtils) {
+                variance += (u - mean) * (u - mean);
+            }
+            vmMipsUtilVarianceSum += variance / mipsUtils.size();
+            vmUtilVarianceCycleCount++;
+            vmMipsUtilVarianceReadings.add(variance / mipsUtils.size());
+        }
+
+    }
+
+    // Update total MIPS, RAM and BW headroom
     private void updateHostCapacityGroundTruth(List<HostEntity> hosts){
 
-        double sumFreeMipsThisCycle = 0, sumFreeRamThisCycle = 0, sumFreeBwThisCycle = 0;
+        double sumFreeMipsThisCycle = 0, sumFreeRamThisCycle = 0, sumFreeBwThisCycle = 0, sumFreeStorageThisCycle = 0;
         int liveHosts = 0;
 
         for (HostEntity host : hosts) {
@@ -1230,6 +1475,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
             sumFreeMipsThisCycle += getHostAvailableMips(host);
             sumFreeRamThisCycle += getHostAvailableRam(host);
             sumFreeBwThisCycle += getHostAvailableBw(host);
+            sumFreeStorageThisCycle += host.getStorage();
             liveHosts++;
         }
 
@@ -1237,10 +1483,15 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
             hostFreeMipsSum += sumFreeMipsThisCycle / liveHosts;
             hostFreeRamSum += sumFreeRamThisCycle / liveHosts;
             hostFreeBwSum += sumFreeBwThisCycle / liveHosts;
+            hostFreeStorageSum += sumFreeStorageThisCycle / liveHosts;
+            hostFreeMipsReadings.add(sumFreeMipsThisCycle / liveHosts);
+            hostFreeRamReadings.add(sumFreeRamThisCycle / liveHosts);
+            hostFreeBwReadings.add(sumFreeBwThisCycle / liveHosts);
         }
 
     }
 
+    // Update VM MIPS headroom
     private void updateVmCapacityGroundTruth(List<GuestEntity> vms){
 
         double sumFreeMipsThisCycle = 0;
@@ -1258,7 +1509,46 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
 
         if (countedVms > 0) {
             vmFreeMipsSum += sumFreeMipsThisCycle / countedVms;
+            vmFreeMipsReadings.add(sumFreeMipsThisCycle / countedVms);
         }
+
+    }
+
+    // Calculate total energy expelled since the last observation
+    private void updateEnergyExpelledReadings(PowerDatacenter dc){
+
+        double totalEnergyExpelled = (dc != null) ? dc.getPower() : 0.0;
+        double energyExpelledSinceLastCycle = totalEnergyExpelled - energyExpelledRunningTotal;
+        energyExpelledRunningTotal = totalEnergyExpelled;
+
+        energyExpelledReadings.add(energyExpelledSinceLastCycle);
+
+    }
+
+    // Calculate total workload (in MI) that has been processed since the last observation
+    private void updateWorkCompletedReadings(List<GuestEntity> vms){
+
+        double totalWorkCompletedTest = 0;
+
+        for (Cloudlet cl : getCloudletSubmittedList()){
+            totalWorkCompletedTest += cl.getCloudletTotalLength() - cl.getRemainingCloudletLength();
+        }
+        
+        double workCompleteSinceLastCycle = totalWorkCompletedTest - workCompleteRunningTotal;
+        workCompleteRunningTotal = totalWorkCompletedTest;
+
+        workCompleteReadings.add(workCompleteSinceLastCycle);
+
+    }
+
+    // Calculate number of cloudlets abandoned since last cycle
+    private void updateCloudletsAbandonded(){
+
+        double totalCloudletsAbandoned = (double) numCloudletsAbandoned;
+        double cloudletsAbandonedSinceLastCycle = totalCloudletsAbandoned - cloudletsAbandonedRunningTotal;
+        cloudletsAbandonedRunningTotal = totalCloudletsAbandoned;
+
+        cloudletsAbandonedReadings.add(cloudletsAbandonedSinceLastCycle);
 
     }
 
@@ -1459,7 +1749,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
 
     }
     
-    // Turn host OFF.
+    // Turn given host OFF. Swtiches to OFF power model which consumes no energy
     private void processHostPowerDown(SimEvent ev) {
 
         //Log.enable();
@@ -1487,6 +1777,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
 
     }
 
+    // Turn on given host. Restore to original power model.
     private void processHostPowerUp(SimEvent ev) {
 
         int hostId = (int) ev.getData();
@@ -1513,25 +1804,45 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         pendingFailures++;
     }
 
+    // Allocate new cloudlets
     private void admitCloudlets(List<Cloudlet> batch) {
         List<Cloudlet> admissible = new ArrayList<>();
+        List<GuestEntity> createdVms = getGuestsCreatedList();
+
         for (Cloudlet cl : batch) {
             GuestEntity vm = getVmById(cl.getGuestId());
 
-            if (vm == null || !getGuestsCreatedList().contains(vm)) {
-                numCloudletsAbandoned++;
-                //Log.enable();
-                Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
-                    " abandoned | target VM#", cl.getGuestId(), " was never created.");
-                Log.disable();
+            if (vm == null || !createdVms.contains(vm)) {
+                if (!createdVms.isEmpty()) {
+                    GuestEntity target = createdVms.get(unrecoverableRng.nextInt(createdVms.size()));
+                    cl.setGuestId(target.getId());
+                    vm = target; // fall through below using the reassigned target
+                    // Log.enable();
+                    Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
+                        " reassigned | original target VM was never created, now bound to VM#", target.getId());
+                    Log.disable();
+                } else {
+                    abandonedWorkProcessed += cl.getCloudletTotalLength() - cl.getRemainingCloudletLength();
+                    numCloudletsAbandoned++;
+                    numCloudletsAbandonedVmNeverCreated++;
+                    // Log.enable();
+                    Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
+                        " abandoned | target VM#", cl.getGuestId(), " was never created, and no live VMs exist to reassign to.");
+                    Log.disable();
+                    continue;
+                }
+            }
 
-            } else if (isHostFailed(vm.getHost())) {
+            // vm is now guaranteed non-null and created — either it always was, or it was just reassigned
+            if (isHostFailed(vm.getHost())) {
 
                 HostEntity host = vm.getHost();
 
                 if (isHostPermanentlyDead(host)) {
+                    abandonedWorkProcessed += cl.getCloudletTotalLength() - cl.getRemainingCloudletLength();
                     numCloudletsAbandoned++;
-                    //Log.enable();
+                    numCloudletsAbandonedHostDead++;
+                    // Log.enable();
                     Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                         " abandoned | target VM#", cl.getGuestId(), " host is permanently dead.");
                     Log.disable();
@@ -1542,7 +1853,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
                     numCloudletsDeferred++;
                     deferralStartTimeByCloudlet.put(cl.getCloudletId(), getNow());
                     exposedCloudletIds.add(cl.getCloudletId());
-                    //Log.enable();
+                    // Log.enable();
                     Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                         " deferred | target VM#", cl.getGuestId(), " host is failed.");
                     Log.disable();
@@ -1558,7 +1869,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         }
     }
 
-        // Destroy a given VM. Reused by host power down and VM destruction actions
+    // Destroy a given VM. Reused by host power down and VM destruction actions
     private void strandAndDestroyGuest(GuestEntity vm, boolean dueToHostPowerDown) {
 
         Integer datacenterId = getDatacenterFor(vm.getId());
@@ -1569,15 +1880,17 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         stranded.addAll(vm.getCloudletScheduler().getCloudletPausedList());
 
         for (Cloudlet cl : stranded) {
+            abandonedWorkProcessed += cl.getCloudletTotalLength() - cl.getRemainingCloudletLength();
             vm.getCloudletScheduler().cloudletCancel(cl.getCloudletId());
-            getCloudletSubmittedList().remove(cl);
+            numSubmittedCloudletsAbandoned++;
             cloudletsSubmitted--;
             if (dueToHostPowerDown) {
                 numCloudletsAbandonedHostPoweredDown++;
             } else {
                 numCloudletsAbandoned++;
+                numCloudletsAbandonedVmDestroyed++;
             }
-            Log.enable();
+            // Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                 " abandoned | VM#", vm.getId(),
                 dueToHostPowerDown ? " was destroyed | host powered down." : " was destroyed.");
@@ -1591,7 +1904,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         }
     }
 
-
+    // Upon determining a host to be unrecoverable - attempt to migrate all VMs to other hosts
     private void evacuateHost(HostEntity deadHost) {
 
         List<GuestEntity> guests = new ArrayList<>(deadHost.getGuestList());
@@ -1653,10 +1966,12 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
 
                 List<Cloudlet> stranded = new ArrayList<>(vm.getCloudletScheduler().getCloudletExecList());
                 for (Cloudlet cl : stranded) {
+                    abandonedWorkProcessed += cl.getCloudletTotalLength() - cl.getRemainingCloudletLength();
                     vm.getCloudletScheduler().cloudletCancel(cl.getCloudletId());
-                    getCloudletSubmittedList().remove(cl);
+                    numSubmittedCloudletsAbandoned++;
                     cloudletsSubmitted--;
                     numCloudletsAbandoned++;
+                    numCloudletsAbandonedEvacuationFailed++;
                     //Log.enable();
                     Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                         " abandoned | VM#", vm.getId(), " could not be evacuated.");
@@ -1664,8 +1979,10 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
                 }
 
                 for (Cloudlet cl : deferredForThisVm) {
+                    abandonedWorkProcessed += cl.getCloudletTotalLength() - cl.getRemainingCloudletLength();
                     deferralStartTimeByCloudlet.remove(cl.getCloudletId());
                     numCloudletsAbandoned++;
+                    numCloudletsAbandonedEvacuationFailed++;
                     //Log.enable();
                     Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
                         " abandoned | VM#", vm.getId(), " could not be evacuated.");
@@ -1721,17 +2038,72 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
                 stuck.add(cl);
             }
         }
+
+        List<GuestEntity> createdVms = getGuestsCreatedList();
+        boolean anySubmittable = false;
+
         for (Cloudlet cl : stuck) {
-            numCloudletsAbandoned++;
-            getCloudletList().remove(cl);
+
+            if (createdVms.isEmpty()) {
+                abandonedWorkProcessed += cl.getCloudletTotalLength() - cl.getRemainingCloudletLength();
+                numCloudletsAbandoned++;
+                numCloudletsAbandonedVmNeverCreated++;
+                getCloudletList().remove(cl);
+                //Log.enable();
+                Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
+                    " abandoned | target VM#", cl.getGuestId(), " was never created, and no live VMs exist to reassign to.");
+                Log.disable();
+                continue;
+            }
+
+            GuestEntity target = createdVms.get(unrecoverableRng.nextInt(createdVms.size()));
+            cl.setGuestId(target.getId());
             //Log.enable();
             Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
-                " abandoned | target VM#", cl.getGuestId(), " was never created.");
+                " reassigned | original target VM was never created, now bound to VM#", target.getId());
             Log.disable();
+
+            // Same failed/dead/healthy fall-through used in admitCloudlets
+            if (isHostFailed(target.getHost())) {
+
+                HostEntity host = target.getHost();
+
+                if (isHostPermanentlyDead(host)) {
+                    abandonedWorkProcessed += cl.getCloudletTotalLength() - cl.getRemainingCloudletLength();
+                    numCloudletsAbandoned++;
+                    numCloudletsAbandonedHostDead++;
+                    getCloudletList().remove(cl);
+                    //Log.enable();
+                    Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
+                        " abandoned | reassigned target VM#", cl.getGuestId(), " host is permanently dead.");
+                    Log.disable();
+
+                } else {
+                    int hostId = host.getId();
+                    deferredCloudletsByHost.computeIfAbsent(hostId, k -> new ArrayList<>()).add(cl);
+                    numCloudletsDeferred++;
+                    deferralStartTimeByCloudlet.put(cl.getCloudletId(), getNow());
+                    exposedCloudletIds.add(cl.getCloudletId());
+                    getCloudletList().remove(cl);
+                    //Log.enable();
+                    Log.printlnConcat(getNow(), ": [Selector] Cloudlet #", cl.getCloudletId(),
+                        " deferred | reassigned target VM#", cl.getGuestId(), " host is failed.");
+                    Log.disable();
+                }
+
+            } else {
+                anySubmittable = true; // stays in getCloudletList(), bound to a healthy VM now
+            }
         }
 
+        if (anySubmittable) {
+            //Log.enable();
+            submitCloudlets();
+            Log.disable();
+        }
     }
 
+    // Retrieve the datacenter object (single datacenter sim so always returns the single datacenter)
     private PowerDatacenter getDatacenter() {
         if (cachedDatacenter == null && !getDatacenterIdsList().isEmpty()) {
             Object entity = CloudSim.getEntity(getDatacenterIdsList().getFirst());
@@ -1742,6 +2114,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         return cachedDatacenter;
     }
 
+    // Keep track of the next ID to be given to new VMs
     private int allocateNextVmId() {
         if (nextVmId == -1) {
             int maxExisting = -1;
@@ -1753,6 +2126,7 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         return nextVmId++;
     }
 
+    // Retrieve complete list of executing and paused cloudlets on the given VM
     private List<Cloudlet> getCloudletsOnVm(GuestEntity vm) {
         List<Cloudlet> cloudlets = new ArrayList<>();
         cloudlets.addAll(vm.getCloudletScheduler().getCloudletExecList());
@@ -1760,4 +2134,14 @@ public class SelectorNoLogs extends DatacenterBroker implements ActionSpace {
         return cloudlets;
     }
 
-}    
+    private static double rollingAverage(List<Double> readings, int window) {
+        if (readings.isEmpty()) return 0.0;
+        int n = Math.min(window, readings.size());
+        double sum = 0;
+        for (int i = readings.size() - n; i < readings.size(); i++) {
+            sum += readings.get(i);
+        }
+        return sum / n;
+    }
+
+}

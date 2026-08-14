@@ -59,6 +59,7 @@ public interface ReadSpace {
     double getHostMaxPower(HostEntity host);
     double getHostEnergyEstimate(HostEntity host, double fromUtil, double toUtil, double time);
     double getTotalEnergyConsumedSoFar();
+    double getTotalWorkProcessedSoFar();
     boolean isHostPoweredDown(HostEntity host);
     boolean isHostPoweringUp(HostEntity host);
     boolean isVmBeingInstantiated(GuestEntity vm);
@@ -66,5 +67,8 @@ public interface ReadSpace {
     List<Cloudlet> getActiveCloudlets();
     double getNextBwTier(GuestEntity vm);
     double getNextRamTier(GuestEntity vm);
+    double getHostMipsPerPe(HostEntity host);
+    int getHostPeCount(HostEntity host);
+    int getNumberCloudletsAbandoned();
 
 }
