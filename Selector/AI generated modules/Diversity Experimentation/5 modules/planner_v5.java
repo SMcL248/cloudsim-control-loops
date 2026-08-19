@@ -1,123 +1,80 @@
 package org.cloudbus.cloudsim.examples;// always include
 
+// Import whats needed
+import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.GuestEntity;
+import org.cloudbus.cloudsim.core.HostEntity;
 import java.util.List;
 
-import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.core.GuestEntity;
-
-/**
- * planner_v5
- *
- * Strategy: "Cloudlet-level load balancing"
- * Cloudlet-level diagnosis. Among cloudlets flagged OVERLOADED, selects the
- * one with the largest remaining length (the worst backlog), locates its
- * current host VM by searching every VM's cloudlet list, then relocates it
- * to whichever other VM in the system currently has the lowest CPU
- * utilisation.
- * Emits moveCloudlet{cloudletId, fromVmId, toVmId}, or an empty array if no
- * source/destination pair can be established.
- */
+// Strategy: horizontal scale-out.
+// Only fires when a majority of active hosts are OVERLOADED, i.e. genuine system-wide
+// saturation rather than a local imbalance that migration/rescaling could fix. Sizes the new
+// VM by severity (near-total saturation gets a bigger guest than borderline saturation) and
+// resolves the datacenter id from any existing VM, since this is a single-datacenter sim.
 public class planner_v5 implements Planner<LoadState[], int[]> {
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
+        List<HostEntity> hosts = readSpace.getAllHosts();
 
-        List<Cloudlet> cloudlets = readSpace.getActiveCloudlets();
-        int limit = Math.min(diagnosis.length, cloudlets.size());
+        int consideredHosts = 0;
+        int overloadedHosts = 0;
 
-        Cloudlet worstCloudlet = null;
-        long worstRemaining = -1L;
-
-        for (int i = 0; i < limit; i++) {
-            if (diagnosis[i] != LoadState.OVERLOADED) {
-                continue;
-            }
-            Cloudlet cl = cloudlets.get(i);
-            long remaining = readSpace.getRemainingLength(cl);
-            if (remaining > worstRemaining) {
-                worstRemaining = remaining;
-                worstCloudlet = cl;
-            }
+        for (int i = 0; i < diagnosis.length && i < hosts.size(); i++) {
+            HostEntity host = hosts.get(i);
+            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host) || readSpace.isHostPoweredDown(host)) continue;
+            consideredHosts++;
+            if (diagnosis[i] == LoadState.OVERLOADED) overloadedHosts++;
         }
 
-        if (worstCloudlet == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v5] ", "no overloaded cloudlet found");
+        if (consideredHosts == 0) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v5] ", "no active hosts to assess, no action");
+            return new int[0];
+        }
+
+        double overloadFraction = (double) overloadedHosts / (double) consideredHosts;
+
+        // Only scale out horizontally when a majority of active hosts are struggling; below
+        // that threshold, migration/rescaling variants are better placed to fix localised load.
+        if (overloadFraction < 0.5) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v5] ", "system-wide load not saturated, no scale-out planned");
             return new int[0];
         }
 
         List<GuestEntity> vms = readSpace.getVmList();
-
-        GuestEntity sourceVm = findOwningVm(readSpace, vms, worstCloudlet);
-        if (sourceVm == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v5] ",
-                    "could not locate owning vm for overloaded cloudlet");
+        if (vms.isEmpty()) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v5] ", "no existing vm to resolve datacenter id from, no action");
             return new int[0];
         }
 
-        GuestEntity destinationVm = findLeastLoadedOtherVm(readSpace, vms, sourceVm);
-        if (destinationVm == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v5] ", "no destination vm available for cloudlet move");
-            return new int[0];
-        }
+        int datacenterId = readSpace.getDatacenterFor(readSpace.getId(vms.get(0)));
 
-        int cloudletId = readSpace.getId(worstCloudlet);
-        int fromVmId = readSpace.getId(sourceVm);
-        int toVmId = readSpace.getId(destinationVm);
+        // Severity decides how generously the new VM is sized: near-total saturation warrants
+        // a bigger guest than borderline saturation.
+        int tierIndex = overloadFraction >= 0.85 ? 2 : 0;
 
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v5] ",
-                "moving cloudlet " + cloudletId + " from vm " + fromVmId + " to vm " + toVmId);
-        return new int[] { cloudletId, fromVmId, toVmId };
-    }
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v5] planning creation of new vm at tier ", tierIndex, " in datacenter ", datacenterId, " due to overload fraction ", overloadFraction);
 
-    private GuestEntity findOwningVm(ReadSpace readSpace, List<GuestEntity> vms, Cloudlet cl) {
-        int targetId = readSpace.getId(cl);
-        for (GuestEntity vm : vms) {
-            for (Cloudlet candidate : readSpace.getVmCloudletList(vm)) {
-                if (readSpace.getId(candidate) == targetId) {
-                    return vm;
-                }
-            }
-        }
-        return null;
-    }
-
-    private GuestEntity findLeastLoadedOtherVm(ReadSpace readSpace, List<GuestEntity> vms, GuestEntity exclude) {
-        GuestEntity best = null;
-        double lowestUtil = Double.MAX_VALUE;
-        for (GuestEntity vm : vms) {
-            if (vm == exclude) {
-                continue;
-            }
-            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
-                continue;
-            }
-            double util = readSpace.getVmCpuUtil(vm);
-            if (util < lowestUtil) {
-                lowestUtil = util;
-                best = vm;
-            }
-        }
-        return best;
+        return new int[] { tierIndex, 0, datacenterId };
     }
 
     @Override
     public String inputSemantic() {
-        return "cloudlet-loadstate-classification";
+        return "host-loadstate-saturation-signal";
     }
 
     @Override
     public String outputSemantic() {
-        return "cloudlet-move";
+        return "requestVmCreation";
     }
 
     @Override
     public int inputGuid() {
-        return 2400;
+        return 2200;
     }
 
     @Override
     public int outputGuid() {
-        return 3001;
+        return 3003;
     }
 }

@@ -1,86 +1,104 @@
-package org.cloudbus.cloudsim.examples;
+package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.HostEntity;
+import java.util.List;
 
+/*
+ * Variant: analyser_v2
+ * Level: HOST
+ * Metric: power consumption (watts)
+ * Strategy: population z-score over host power draw. Powered-down hosts are
+ * excluded from the mean/std-dev computation (their near-zero draw would
+ * otherwise drag the whole distribution down and mask genuine outliers among
+ * the active hosts), but are still labelled UNDERLOADED directly since they
+ * are doing no work at all.
+ */
 public class analyser_v2 implements Analyser<double[], LoadState[]> {
 
-    private static final int INPUT_GUID = 1200;
-    private static final int OUTPUT_GUID = 2200;
-    private static final String INPUT_SEMANTIC = "host-cpuUtilFraction-normalized";
-    private static final String OUTPUT_SEMANTIC = "host-loadState-zscoreRelative";
-
-    private static final double Z_HIGH = 1.0;
-    private static final double Z_LOW = -1.0;
+    private static final double Z_THRESHOLD = 1.0;
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
-        int n = metrics.length;
-        LoadState[] result = new LoadState[n];
+        List<HostEntity> hosts = readSpace.getAllHosts();
+        LoadState[] states = new LoadState[metrics.length];
 
-        if (n == 0) {
-            Log.printlnConcat(readSpace.getNow(), ": [analyser_v2] no hosts to classify.");
-            return result;
-        }
-
+        boolean[] active = new boolean[metrics.length];
         double sum = 0.0;
-        for (double v : metrics) {
-            sum += v;
+        int activeCount = 0;
+
+        for (int i = 0; i < metrics.length; i++) {
+            HostEntity host = hosts.get(i);
+            if (readSpace.isHostPoweredDown(host)) {
+                active[i] = false;
+                states[i] = LoadState.UNDERLOADED;
+                Log.printlnConcat(readSpace.getNow(), ": [analyser_v2] host ", readSpace.getId(host), " is powered down -> UNDERLOADED");
+            } else {
+                active[i] = true;
+                sum += metrics[i];
+                activeCount++;
+            }
         }
-        double mean = sum / n;
 
-        double sqDiffSum = 0.0;
-        for (double v : metrics) {
-            sqDiffSum += (v - mean) * (v - mean);
+        if (activeCount == 0) {
+            Log.printlnConcat(readSpace.getNow(), ": [analyser_v2] no active hosts to score");
+            return states;
         }
-        double stdDev = Math.sqrt(sqDiffSum / n);
 
-        int overloadedCount = 0;
-        int underloadedCount = 0;
+        double mean = sum / activeCount;
+        double sqDiff = 0.0;
+        for (int i = 0; i < metrics.length; i++) {
+            if (active[i]) {
+                double d = metrics[i] - mean;
+                sqDiff += d * d;
+            }
+        }
+        double std = Math.sqrt(sqDiff / activeCount);
 
-        for (int i = 0; i < n; i++) {
-            if (stdDev < 1e-9) {
-                // No spread in the data this round; every host sits at the
-                // mean, so there is nothing to distinguish them by.
-                result[i] = LoadState.BALANCED;
+        int overloaded = 0, underloaded = 0, balanced = 0;
+        for (int i = 0; i < metrics.length; i++) {
+            if (!active[i]) {
                 continue;
             }
-            double z = (metrics[i] - mean) / stdDev;
-            if (z >= Z_HIGH) {
-                result[i] = LoadState.OVERLOADED;
-                overloadedCount++;
-            } else if (z <= Z_LOW) {
-                result[i] = LoadState.UNDERLOADED;
-                underloadedCount++;
+            if (std < 1e-9) {
+                states[i] = LoadState.BALANCED;
+                balanced++;
+                continue;
+            }
+            double z = (metrics[i] - mean) / std;
+            if (z >= Z_THRESHOLD) {
+                states[i] = LoadState.OVERLOADED;
+                overloaded++;
+            } else if (z <= -Z_THRESHOLD) {
+                states[i] = LoadState.UNDERLOADED;
+                underloaded++;
             } else {
-                result[i] = LoadState.BALANCED;
+                states[i] = LoadState.BALANCED;
+                balanced++;
             }
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [analyser_v2] classified ", n,
-                " hosts by z-score around mean=", mean, ", stdDev=", stdDev, ": ",
-                overloadedCount, " overloaded, ", underloadedCount, " underloaded, ",
-                (n - overloadedCount - underloadedCount), " balanced.");
-
-        return result;
+        Log.printlnConcat(readSpace.getNow(), ": [analyser_v2] power z-score classification: mean=", mean, " std=", std, " -> ", overloaded, " overloaded, ", underloaded, " underloaded, ", balanced, " balanced");
+        return states;
     }
 
     @Override
     public String inputSemantic() {
-        return INPUT_SEMANTIC;
+        return "host-power-consumption-watts";
     }
 
     @Override
     public String outputSemantic() {
-        return OUTPUT_SEMANTIC;
+        return "host-load-state-power-zscore";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 1200;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 2200;
     }
 }

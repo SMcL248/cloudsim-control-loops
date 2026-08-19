@@ -3,116 +3,101 @@ package org.cloudbus.cloudsim.examples;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 import java.util.List;
 
-// Overload-Triggered Migration Planner.
-// Finds the first VM flagged OVERLOADED in the VM-level LoadState[], locates
-// its current host by scanning host VM lists, then migrates it to the
-// eligible non-failed, powered-on host with the most available MIPS
-// headroom that can actually accept it.
+// Strategy: Best-fit relief migration.
+// For the first OVERLOADED VM found, this planner searches every host that can
+// legally accept it and picks the one with the SMALLEST available MIPS headroom
+// that still satisfies canMigrateGuestToHost. This is a best-fit bin-packing
+// choice: it relieves the VM's pressure while minimising fragmentation, rather
+// than simply dumping the VM onto whichever host happens to have the most room.
 public class planner_v3 implements Planner<LoadState[], int[]> {
-
-    private static final int INPUT_GUID = 2300;
-    private static final int OUTPUT_GUID = 3002;
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
+
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v3] ", "scanning for overloaded VMs needing best-fit relief");
+
         List<GuestEntity> vms = readSpace.getVmList();
         List<HostEntity> hosts = readSpace.getAllHosts();
 
-        GuestEntity overloadedVm = null;
         int limit = Math.min(diagnosis.length, vms.size());
         for (int i = 0; i < limit; i++) {
-            if (diagnosis[i] == LoadState.OVERLOADED) {
-                overloadedVm = vms.get(i);
-                break;
+
+            if (diagnosis[i] != LoadState.OVERLOADED) {
+                continue;
             }
-        }
 
-        if (overloadedVm == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v3] no overloaded vm found, no migration needed");
-            return new int[0];
-        }
+            GuestEntity vm = vms.get(i);
 
-        if (readSpace.isVmMigrating(overloadedVm) || readSpace.isVmBeingInstantiated(overloadedVm)) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v3] target vm already migrating or instantiating, skipping");
-            return new int[0];
-        }
+            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
+                continue;
+            }
 
-        HostEntity currentHost = null;
-        for (HostEntity host : hosts) {
-            List<GuestEntity> hosted = readSpace.getVmListForHost(host);
-            for (GuestEntity hostedVm : hosted) {
-                if (readSpace.getId(hostedVm) == readSpace.getId(overloadedVm)) {
-                    currentHost = host;
-                    break;
+            HostEntity currentHost = findHostOf(readSpace, hosts, vm);
+
+            HostEntity bestFitHost = null;
+            double bestHeadroom = Double.MAX_VALUE;
+
+            for (HostEntity host : hosts) {
+
+                if (host == currentHost) {
+                    continue;
+                }
+                if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)
+                        || readSpace.isHostPoweredDown(host) || readSpace.isHostPoweringUp(host)) {
+                    continue;
+                }
+                if (!readSpace.canMigrateGuestToHost(host, vm)) {
+                    continue;
+                }
+
+                double headroom = readSpace.getHostAvailableMips(host);
+                if (headroom < bestHeadroom) {
+                    bestHeadroom = headroom;
+                    bestFitHost = host;
                 }
             }
-            if (currentHost != null) {
-                break;
+
+            if (bestFitHost != null) {
+                int vmId = readSpace.getId(vm);
+                int hostId = readSpace.getId(bestFitHost);
+                Log.printlnConcat(readSpace.getNow(), ": [planner_v3] ", "best-fit migration vmId=" + vmId + " targetHostId=" + hostId);
+                return new int[] { vmId, hostId };
             }
         }
 
-        HostEntity bestTarget = null;
-        double bestAvailableMips = -1.0;
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v3] ", "no overloaded VM had a viable best-fit destination host");
+        return null;
+    }
+
+    private HostEntity findHostOf(ReadSpace readSpace, List<HostEntity> hosts, GuestEntity vm) {
         for (HostEntity host : hosts) {
-            if (currentHost != null && readSpace.getId(host) == readSpace.getId(currentHost)) {
-                continue;
-            }
-            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)) {
-                continue;
-            }
-            if (readSpace.isHostPoweredDown(host) || readSpace.isHostPoweringUp(host)) {
-                continue;
-            }
-            if (!readSpace.hostHasFreePe(host)) {
-                continue;
-            }
-            if (!readSpace.canMigrateGuestToHost(host, overloadedVm)) {
-                continue;
-            }
-            double available = readSpace.getHostAvailableMips(host);
-            if (available > bestAvailableMips) {
-                bestAvailableMips = available;
-                bestTarget = host;
+            List<GuestEntity> guests = readSpace.getVmListForHost(host);
+            if (guests.contains(vm)) {
+                return host;
             }
         }
-
-        if (bestTarget == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v3] no suitable migration target found for vm ", readSpace.getId(overloadedVm));
-            return new int[0];
-        }
-
-        int vmId = readSpace.getId(overloadedVm);
-        int hostId = readSpace.getId(bestTarget);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v3] migrating vm ", vmId, " to host ", hostId);
-        return new int[] { vmId, hostId };
+        return null;
     }
 
     @Override
     public String inputSemantic() {
-        return "vm-loadstate-classification";
+        return "vm-cpuutil-loadstate";
     }
 
     @Override
     public String outputSemantic() {
-        return "requestVmMigration";
+        return "vm-migration-bestfit-relief";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 2300;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 3002;
     }
 }

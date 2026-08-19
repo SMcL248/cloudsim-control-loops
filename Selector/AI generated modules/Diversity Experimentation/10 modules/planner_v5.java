@@ -2,74 +2,94 @@ package org.cloudbus.cloudsim.examples;
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 import java.util.List;
 
-// Persistent-Underload Consolidation Planner.
-// Scans the VM-level LoadState[] for an UNDERLOADED VM that is not mid
-// migration or instantiation and, critically, currently has zero attached
-// cloudlets. Destroying an idle VM with no workload avoids any risk of
-// cloudlet loss, unlike destroying a VM that still has active work.
+// Strategy: Sustained-load confirmation before vertical scale-up.
+// A VM being OVERLOADED at this instant is not, by itself, trusted. This planner
+// additionally reads the 30-reading rolling mean and MAD of the VM's utilisation
+// (scaling the MAD by the VM's MIPS rating, since it is not natively MIPS-scaled)
+// to distinguish a sustained high load from a noisy transient spike. Only a VM
+// that is both persistently high AND stable is scaled up a MIPS tier, avoiding
+// scale-up thrash on short-lived bursts.
 public class planner_v5 implements Planner<LoadState[], int[]> {
 
-    private static final int INPUT_GUID = 2300;
-    private static final int OUTPUT_GUID = 3004;
+    private static final double SUSTAINED_MEAN_THRESHOLD = 0.75;
+    private static final double STABILITY_RATIO = 0.15;
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
+
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v5] ", "checking overloaded VMs for sustained, stable load");
+
         List<GuestEntity> vms = readSpace.getVmList();
+        int[] mipsTiers = readSpace.getMipsTiers();
+
         int limit = Math.min(diagnosis.length, vms.size());
-
-        GuestEntity target = null;
         for (int i = 0; i < limit; i++) {
-            if (diagnosis[i] != LoadState.UNDERLOADED) {
+
+            if (diagnosis[i] != LoadState.OVERLOADED) {
                 continue;
             }
+
             GuestEntity vm = vms.get(i);
-            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
+
+            double mean = readSpace.getVmUtilizationMean(vm);
+            double mad = readSpace.getVmUtilizationMad(vm);
+            double vmMips = readSpace.getVmMips(vm);
+            double scaledMad = mad * vmMips;
+
+            boolean sustained = mean >= SUSTAINED_MEAN_THRESHOLD;
+            boolean stable = scaledMad <= (mean * vmMips * STABILITY_RATIO);
+
+            if (!(sustained && stable)) {
                 continue;
             }
-            List<Cloudlet> workload = readSpace.getVmCloudletList(vm);
-            if (workload.isEmpty()) {
-                target = vm;
-                break;
+
+            double nextTierValue = readSpace.getNextMipsTier(vm);
+            if (nextTierValue < 0) {
+                continue;
+            }
+
+            int tierIndex = indexOfTier(mipsTiers, nextTierValue);
+            if (tierIndex < 0) {
+                continue;
+            }
+
+            int vmId = readSpace.getId(vm);
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v5] ", "confirmed sustained overload, scaling vmId=" + vmId + " to mips tier index=" + tierIndex);
+            return new int[] { vmId, tierIndex };
+        }
+
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v5] ", "no VM showed sustained, stable overload this cycle");
+        return null;
+    }
+
+    private int indexOfTier(int[] tiers, double value) {
+        for (int i = 0; i < tiers.length; i++) {
+            if (tiers[i] == value) {
+                return i;
             }
         }
-
-        if (target == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v5] no idle underloaded vm safe to destroy");
-            return new int[0];
-        }
-
-        int vmId = readSpace.getId(target);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v5] destroying idle vm ", vmId, " to reclaim resources");
-        return new int[] { vmId };
+        return -1;
     }
 
     @Override
     public String inputSemantic() {
-        return "vm-loadstate-classification";
+        return "vm-cpuutil-loadstate";
     }
 
     @Override
     public String outputSemantic() {
-        return "requestVmDestruction";
+        return "vm-mips-scaleup-sustained";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 2300;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 3005;
     }
 }

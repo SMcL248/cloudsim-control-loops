@@ -4,15 +4,19 @@ import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.HostEntity;
 import java.util.List;
 
-// Host-level monitor: discrete health/state code.
-// Encodes each host's operational state as an integer-valued double so
-// downstream modules can branch on failure/power state without needing
-// direct access to the boolean predicate calls themselves:
-//   0 = healthy, 1 = transiently failed (recoverable), 2 = permanently dead,
-//   3 = powered down, 4 = powering up.
-// Checked in descending order of severity so a host cannot be miscategorised
-// as merely "powering up" while it is actually permanently dead.
+/**
+ * Host-level monitor. Estimates the energy cost the datacenter would
+ * incur if this host were suddenly pushed from its current load to full
+ * utilisation within the next unit of simulation time. Uses the host's
+ * current power draw relative to its max power draw as a proxy for its
+ * present utilisation, then asks the energy model what a ramp to 100%
+ * would cost. Hosts with a high value are the ones where an incoming
+ * burst of work would be most energy-expensive right now, independent
+ * of whether they currently have spare resource headroom.
+ */
 public class monitor_v3 implements Monitor<double[]> {
+
+    private static final double RAMP_HORIZON = 1.0;
 
     @Override
     public double[] observe(ReadSpace readSpace) {
@@ -22,28 +26,20 @@ public class monitor_v3 implements Monitor<double[]> {
         for (int i = 0; i < hosts.size(); i++) {
             HostEntity host = hosts.get(i);
 
-            if (readSpace.isHostPermanentlyDead(host)) {
-                result[i] = 2.0;
-            } else if (readSpace.isHostFailed(host)) {
-                result[i] = 1.0;
-            } else if (readSpace.isHostPoweredDown(host)) {
-                result[i] = 3.0;
-            } else if (readSpace.isHostPoweringUp(host)) {
-                result[i] = 4.0;
-            } else {
-                result[i] = 0.0;
-            }
+            double maxPower = readSpace.getHostMaxPower(host);
+            double currentPower = readSpace.getHostPower(host);
+            double fromUtil = maxPower > 0 ? currentPower / maxPower : 0.0;
+
+            result[i] = readSpace.getHostEnergyEstimate(host, fromUtil, 1.0, RAMP_HORIZON);
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v3] computed host health state code for ",
-                hosts.size(), " hosts");
-
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v3] ", "computed power-spike exposure for ", hosts.size(), " hosts");
         return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "host-health-state-code-0healthy-1failed-2dead-3off-4poweringup";
+        return "host-power-spike-exposure-ramp-to-max-energy-estimate";
     }
 
     @Override

@@ -1,95 +1,98 @@
-package org.cloudbus.cloudsim.examples;
+package org.cloudbus.cloudsim.examples;// always include
 
-import java.util.Arrays;
 import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.GuestEntity;
+import java.util.Arrays;
+import java.util.List;
 
+/*
+ * Variant: analyser_v3
+ * Level: VM
+ * Metric: CPU utilisation fraction
+ * Strategy: robust classification using the sample median and the Median
+ * Absolute Deviation (MAD) of the current utilisation snapshot, rather than
+ * the mean/std-dev band used elsewhere. MAD is far less sensitive to a
+ * handful of extreme VMs than a standard-deviation band, so this variant
+ * should stay stable when a few VMs spike.
+ */
 public class analyser_v3 implements Analyser<double[], LoadState[]> {
 
-    private static final int INPUT_GUID = 1300;
-    private static final int OUTPUT_GUID = 2300;
-    private static final String INPUT_SEMANTIC = "vm-cpuUtilFraction-instantaneous";
-    private static final String OUTPUT_SEMANTIC = "vm-loadState-medianMadRobust";
-
-    // Scale factor that makes MAD comparable to a standard deviation under a
-    // roughly normal distribution.
-    private static final double MAD_SCALE = 1.4826;
-    private static final double SPREAD_MULTIPLIER = 1.5;
+    private static final double MAD_SCALE = 1.4826; // normal-consistency scaling factor
+    private static final double K = 1.5;
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
-        int n = metrics.length;
-        LoadState[] result = new LoadState[n];
-
-        if (n == 0) {
-            Log.printlnConcat(readSpace.getNow(), ": [analyser_v3] no VMs to classify.");
-            return result;
-        }
+        List<GuestEntity> vms = readSpace.getVmList();
+        LoadState[] states = new LoadState[metrics.length];
 
         double median = median(metrics);
-
-        double[] absDeviations = new double[n];
-        for (int i = 0; i < n; i++) {
-            absDeviations[i] = Math.abs(metrics[i] - median);
+        double[] absDevs = new double[metrics.length];
+        for (int i = 0; i < metrics.length; i++) {
+            absDevs[i] = Math.abs(metrics[i] - median);
         }
-        double mad = median(absDeviations) * MAD_SCALE;
+        double mad = median(absDevs) * MAD_SCALE;
+        double upper = median + K * mad;
+        double lower = median - K * mad;
 
-        int overloadedCount = 0;
-        int underloadedCount = 0;
-
-        for (int i = 0; i < n; i++) {
+        int overloaded = 0, underloaded = 0, balanced = 0;
+        for (int i = 0; i < metrics.length; i++) {
+            GuestEntity vm = vms.get(i);
+            LoadState state;
             if (mad < 1e-9) {
-                // Every VM sits at (or very near) the median; no robust
-                // outliers can be identified this round.
-                result[i] = LoadState.BALANCED;
-                continue;
-            }
-            double deviation = metrics[i] - median;
-            if (deviation >= SPREAD_MULTIPLIER * mad) {
-                result[i] = LoadState.OVERLOADED;
-                overloadedCount++;
-            } else if (deviation <= -SPREAD_MULTIPLIER * mad) {
-                result[i] = LoadState.UNDERLOADED;
-                underloadedCount++;
+                state = Math.abs(metrics[i] - median) < 1e-9 ? LoadState.BALANCED
+                        : (metrics[i] > median ? LoadState.OVERLOADED : LoadState.UNDERLOADED);
+            } else if (metrics[i] > upper) {
+                state = LoadState.OVERLOADED;
+            } else if (metrics[i] < lower) {
+                state = LoadState.UNDERLOADED;
             } else {
-                result[i] = LoadState.BALANCED;
+                state = LoadState.BALANCED;
+            }
+            states[i] = state;
+            switch (state) {
+                case OVERLOADED: overloaded++; break;
+                case UNDERLOADED: underloaded++; break;
+                default: balanced++; break;
+            }
+            if (state != LoadState.BALANCED) {
+                Log.printlnConcat(readSpace.getNow(), ": [analyser_v3] vm ", readSpace.getId(vm), " util=", metrics[i], " -> ", state);
             }
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [analyser_v3] classified ", n,
-                " VMs by robust median/MAD spread (median=", median, ", mad=", mad, "): ",
-                overloadedCount, " overloaded, ", underloadedCount, " underloaded, ",
-                (n - overloadedCount - underloadedCount), " balanced.");
-
-        return result;
+        Log.printlnConcat(readSpace.getNow(), ": [analyser_v3] median-MAD classification: median=", median, " mad=", mad, " -> ", overloaded, " overloaded, ", underloaded, " underloaded, ", balanced, " balanced");
+        return states;
     }
 
     private double median(double[] values) {
         double[] sorted = Arrays.copyOf(values, values.length);
         Arrays.sort(sorted);
-        int mid = sorted.length / 2;
-        if (sorted.length % 2 == 0) {
-            return (sorted[mid - 1] + sorted[mid]) / 2.0;
+        int n = sorted.length;
+        if (n == 0) {
+            return 0.0;
         }
-        return sorted[mid];
+        if (n % 2 == 1) {
+            return sorted[n / 2];
+        }
+        return (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
     }
 
     @Override
     public String inputSemantic() {
-        return INPUT_SEMANTIC;
+        return "vm-cpu-utilization-fraction";
     }
 
     @Override
     public String outputSemantic() {
-        return OUTPUT_SEMANTIC;
+        return "vm-load-state-median-mad";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 1300;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 2300;
     }
 }

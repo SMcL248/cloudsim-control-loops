@@ -1,106 +1,83 @@
-package org.cloudbus.cloudsim.examples;
+package org.cloudbus.cloudsim.examples;// always include
 
-import java.util.Arrays;
-import java.util.List;
-import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.GuestEntity;
+import java.util.List;
 
+/*
+ * Variant: analyser_v10
+ * Level: VM
+ * Metric: effective throughput (MIPS)
+ * Strategy: personalized baseline - each VM is judged only against its OWN
+ * rolling history (readSpace.getVmUtilizationMean/Mad), never against its
+ * peers in the current batch. This is the only variant that performs no
+ * cross-entity comparison at all: a VM that is simply "busier than average"
+ * is not flagged unless it is busier than ITS OWN recent normal. Per the
+ * ReadSpace contract, getVmUtilizationMad is expressed in raw (unscaled)
+ * utilisation units while getVmUtilizationMean and the incoming throughput
+ * metric are MIPS-scaled, so the MAD is scaled by the VM's MIPS rating
+ * before it is used to build a comparable band.
+ */
 public class analyser_v10 implements Analyser<double[], LoadState[]> {
 
-    private static final int INPUT_GUID = 1400;
-    private static final int OUTPUT_GUID = 2400;
-    private static final String INPUT_SEMANTIC = "cloudlet-peDemand-requested";
-    private static final String OUTPUT_SEMANTIC = "cloudlet-loadState-urgencyComposite";
+    private static final double K = 1.5;
+    private static final double MIN_BAND = 1e-6;
 
     @Override
-    public LoadState[] analyse(final double[] metrics, ReadSpace readSpace) {
-        List<Cloudlet> cloudlets = readSpace.getActiveCloudlets();
+    public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
+        List<GuestEntity> vms = readSpace.getVmList();
         int n = metrics.length;
-        LoadState[] result = new LoadState[n];
+        LoadState[] states = new LoadState[n];
+        int overloaded = 0, underloaded = 0, balanced = 0;
 
-        if (n == 0) {
-            Log.printlnConcat(readSpace.getNow(), ": [analyser_v10] no cloudlets to classify.");
-            return result;
-        }
-
-        double maxPeDemand = 0.0;
-        for (double v : metrics) {
-            if (v > maxPeDemand) {
-                maxPeDemand = v;
-            }
-        }
-
-        // Urgency blends how resource-hungry a cloudlet is (its PE demand,
-        // normalized against the busiest cloudlet this round) with how much
-        // work it still has left to do (its remaining-length fraction). A
-        // cloudlet that is both heavy and far from done is the most urgent.
-        final double[] urgency = new double[n];
         for (int i = 0; i < n; i++) {
-            double normalizedPeDemand = (maxPeDemand > 1e-9) ? (metrics[i] / maxPeDemand) : 0.0;
+            GuestEntity vm = vms.get(i);
+            double personalMean = readSpace.getVmUtilizationMean(vm);
+            double personalMadRaw = readSpace.getVmUtilizationMad(vm);
+            double personalMadScaled = personalMadRaw * readSpace.getVmMips(vm);
+            double band = Math.max(K * personalMadScaled, MIN_BAND);
 
-            double progressFraction = 0.5;
-            if (i < cloudlets.size()) {
-                Cloudlet cl = cloudlets.get(i);
-                long total = readSpace.getTotalLength(cl);
-                long remaining = readSpace.getRemainingLength(cl);
-                if (total > 0) {
-                    progressFraction = (double) remaining / (double) total;
-                }
-            }
-
-            urgency[i] = normalizedPeDemand * progressFraction;
-        }
-
-        Integer[] order = new Integer[n];
-        for (int i = 0; i < n; i++) {
-            order[i] = i;
-        }
-        Arrays.sort(order, (a, b) -> Double.compare(urgency[a], urgency[b]));
-
-        int lowerCut = n / 3;
-        int upperCut = n - n / 3;
-
-        int overloadedCount = 0;
-        int underloadedCount = 0;
-
-        for (int rank = 0; rank < n; rank++) {
-            int originalIndex = order[rank];
-            if (rank >= upperCut) {
-                result[originalIndex] = LoadState.OVERLOADED;
-                overloadedCount++;
-            } else if (rank < lowerCut) {
-                result[originalIndex] = LoadState.UNDERLOADED;
-                underloadedCount++;
+            double value = metrics[i];
+            LoadState state;
+            if (value > personalMean + band) {
+                state = LoadState.OVERLOADED;
+            } else if (value < personalMean - band) {
+                state = LoadState.UNDERLOADED;
             } else {
-                result[originalIndex] = LoadState.BALANCED;
+                state = LoadState.BALANCED;
+            }
+            states[i] = state;
+            switch (state) {
+                case OVERLOADED: overloaded++; break;
+                case UNDERLOADED: underloaded++; break;
+                default: balanced++; break;
+            }
+            if (state != LoadState.BALANCED) {
+                Log.printlnConcat(readSpace.getNow(), ": [analyser_v10] vm ", readSpace.getId(vm), " deviates from its own baseline (mean=", personalMean, ") -> ", state);
             }
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [analyser_v10] ranked ", n,
-                " cloudlets by composite PE-demand/progress urgency: ", overloadedCount,
-                " overloaded, ", underloadedCount, " underloaded, ",
-                (n - overloadedCount - underloadedCount), " balanced.");
-
-        return result;
+        Log.printlnConcat(readSpace.getNow(), ": [analyser_v10] personalized-baseline classification: ", overloaded, " overloaded, ", underloaded, " underloaded, ", balanced, " balanced");
+        return states;
     }
 
     @Override
     public String inputSemantic() {
-        return INPUT_SEMANTIC;
+        return "vm-effective-throughput-mips";
     }
 
     @Override
     public String outputSemantic() {
-        return OUTPUT_SEMANTIC;
+        return "vm-load-state-personalized-baseline";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 1300;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 2300;
     }
 }

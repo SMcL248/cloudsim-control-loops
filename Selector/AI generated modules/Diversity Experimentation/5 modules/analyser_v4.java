@@ -1,69 +1,65 @@
 package org.cloudbus.cloudsim.examples;// always include
 
-// Import whats needed
-import java.util.List;
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.HostEntity;
+import java.util.HashMap;
+import java.util.Map;
 
-/**
- * Variant 4 - Host level, operational-state override plus fixed thresholds.
- * A host that is down, failed, or permanently dead is doing no useful work no
- * matter what its power reading suggests, so its operational state overrides
- * the numeric classification. Any host still in service is then classified
- * against fixed power-ratio thresholds.
- */
+// Strategy: stateful hysteresis / dead-band classifier.
+// This variant remembers each index's previous classification across
+// invocations. Entering OVERLOADED or UNDERLOADED requires crossing an
+// outer band; leaving that state requires retreating past a separate,
+// looser inner band. This asymmetric dead-band damps rapid flapping
+// between states when a host's power draw oscillates near a boundary -
+// a purely instantaneous classifier (as in v1) would flip-flop here.
 public class analyser_v4 implements Analyser<double[], LoadState[]> {
+
+    private static final String MODULE_NAME = "analyser_v4";
 
     private static final int INPUT_GUID = 1200;
     private static final int OUTPUT_GUID = 2200;
-    private static final String INPUT_SEMANTIC = "host-power-consumption-ratio-of-max-power";
-    private static final String OUTPUT_SEMANTIC = "host-load-classification-balanced-under-over";
+    private static final String INPUT_SEMANTIC = "host-power-draw-ratio";
+    private static final String OUTPUT_SEMANTIC = "host-power-hysteresis-classification";
 
-    private static final double OVERLOAD_THRESHOLD = 0.75;
-    private static final double UNDERLOAD_THRESHOLD = 0.30;
+    private static final double OVERLOAD_ENTER = 0.75;
+    private static final double OVERLOAD_EXIT = 0.55;
+    private static final double UNDERLOAD_ENTER = 0.15;
+    private static final double UNDERLOAD_EXIT = 0.30;
+
+    private final Map<Integer, LoadState> previousState = new HashMap<Integer, LoadState>();
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
         int n = metrics.length;
-        LoadState[] states = new LoadState[n];
-        List<HostEntity> hosts = readSpace.getAllHosts();
-
-        int overloaded = 0;
-        int underloaded = 0;
-        int balanced = 0;
-        int stateOverridden = 0;
+        LoadState[] result = new LoadState[n];
 
         for (int i = 0; i < n; i++) {
-            HostEntity host = hosts.get(i);
-            LoadState state;
+            double v = metrics[i];
+            LoadState prior = previousState.get(i);
+            LoadState next;
 
-            if (readSpace.isHostPermanentlyDead(host)
-                    || readSpace.isHostFailed(host)
-                    || readSpace.isHostPoweredDown(host)) {
-                state = LoadState.UNDERLOADED;
-                stateOverridden++;
+            if (Double.isNaN(v)) {
+                next = (prior != null) ? prior : LoadState.BALANCED;
+            } else if (prior == LoadState.OVERLOADED) {
+                next = (v >= OVERLOAD_EXIT) ? LoadState.OVERLOADED : LoadState.BALANCED;
+            } else if (prior == LoadState.UNDERLOADED) {
+                next = (v <= UNDERLOAD_EXIT) ? LoadState.UNDERLOADED : LoadState.BALANCED;
+            } else if (v >= OVERLOAD_ENTER) {
+                next = LoadState.OVERLOADED;
+            } else if (v <= UNDERLOAD_ENTER) {
+                next = LoadState.UNDERLOADED;
             } else {
-                double powerRatio = metrics[i];
-                if (powerRatio > OVERLOAD_THRESHOLD) {
-                    state = LoadState.OVERLOADED;
-                } else if (powerRatio < UNDERLOAD_THRESHOLD) {
-                    state = LoadState.UNDERLOADED;
-                } else {
-                    state = LoadState.BALANCED;
-                }
+                next = LoadState.BALANCED;
             }
 
-            states[i] = state;
-            if (state == LoadState.OVERLOADED) overloaded++;
-            else if (state == LoadState.UNDERLOADED) underloaded++;
-            else balanced++;
+            result[i] = next;
+            previousState.put(i, next);
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [analyser_v4] power-ratio host classification complete -> ",
-                n, " hosts, overloaded=", overloaded, ", underloaded=", underloaded, ", balanced=", balanced,
-                ", stateOverridden=", stateOverridden);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] classified ", n,
+                " hosts with hysteresis bands; overload enter/exit=", OVERLOAD_ENTER, "/", OVERLOAD_EXIT,
+                " underload enter/exit=", UNDERLOAD_ENTER, "/", UNDERLOAD_EXIT);
 
-        return states;
+        return result;
     }
 
     @Override

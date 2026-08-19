@@ -1,14 +1,19 @@
 package org.cloudbus.cloudsim.examples;
 
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
 import java.util.List;
 
-// Host-level monitor: aggregate CPU utilisation fraction.
-// For each host, sums the effective throughput of every VM currently hosted
-// there and divides by the host's total MIPS capacity. This gives a live
-// demand-over-capacity load signal per host.
+/**
+ * Host-level monitor. For each host, measures how unevenly its remaining
+ * headroom is spread across MIPS, RAM and Bandwidth. A host can look
+ * "free" on average while one resource is nearly exhausted; this metric
+ * surfaces that imbalance as the standard deviation of the three
+ * per-resource headroom fractions. Low value = evenly balanced headroom
+ * (safe for arbitrary future placements). High value = fragmented
+ * headroom (host is close to becoming a bottleneck on one dimension
+ * even though it looks fine overall).
+ */
 public class monitor_v1 implements Monitor<double[]> {
 
     @Override
@@ -19,38 +24,27 @@ public class monitor_v1 implements Monitor<double[]> {
         for (int i = 0; i < hosts.size(); i++) {
             HostEntity host = hosts.get(i);
 
-            // Hosts that are failed, permanently dead, or powered down are not
-            // meaningfully "utilised" in the demand-over-capacity sense.
-            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)
-                    || readSpace.isHostPoweredDown(host)) {
-                result[i] = -1.0;
-                continue;
-            }
-
             double totalMips = readSpace.getHostTotalMips(host);
-            if (totalMips <= 0.0) {
-                result[i] = -1.0;
-                continue;
-            }
+            double totalRam = readSpace.getHostTotalRam(host);
+            double totalBw = readSpace.getHostTotalBw(host);
 
-            double usedMips = 0.0;
-            List<GuestEntity> vmsOnHost = readSpace.getVmListForHost(host);
-            for (GuestEntity vm : vmsOnHost) {
-                usedMips += readSpace.getVmEffectiveThroughput(vm);
-            }
+            double fMips = totalMips > 0 ? readSpace.getHostAvailableMips(host) / totalMips : 0.0;
+            double fRam = totalRam > 0 ? readSpace.getHostAvailableRam(host) / totalRam : 0.0;
+            double fBw = totalBw > 0 ? readSpace.getHostAvailableBw(host) / totalBw : 0.0;
 
-            result[i] = usedMips / totalMips;
+            double mean = (fMips + fRam + fBw) / 3.0;
+            double variance = (Math.pow(fMips - mean, 2) + Math.pow(fRam - mean, 2) + Math.pow(fBw - mean, 2)) / 3.0;
+
+            result[i] = Math.sqrt(variance);
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v1] computed host cpu utilisation fraction for ",
-                hosts.size(), " hosts");
-
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v1] ", "computed headroom-imbalance score for ", hosts.size(), " hosts");
         return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "host-cpu-util-weighted-fraction-effective-throughput-over-total-mips";
+        return "host-resource-headroom-imbalance-mips-ram-bw-stddev";
     }
 
     @Override

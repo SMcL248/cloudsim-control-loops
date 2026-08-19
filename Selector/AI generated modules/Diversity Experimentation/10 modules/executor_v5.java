@@ -3,19 +3,14 @@ package org.cloudbus.cloudsim.examples;// always include
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
-// Variant angle: requestMipsScaling, guarded by bounds-checking tierIndex against
-// getMipsTiers() before dereferencing it, and tracking the boolean success signal
-// from ActionSpace via getSuccessfulActionCount().
 public class executor_v5 implements Executor<int[]> {
 
     private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        double now = actionSpace.getNow();
-
         if (actions == null || actions.length != 2) {
-            Log.printlnConcat(now, ": [executor_v5] REJECTED malformed payload, expected {vmId, tierIndex}");
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v5] rejected malformed payload, expected 2 ints");
             return false;
         }
 
@@ -23,30 +18,33 @@ public class executor_v5 implements Executor<int[]> {
         int tierIndex = actions[1];
 
         GuestEntity vm = actionSpace.getVmById(vmId);
-        if (vm == null) {
-            Log.printlnConcat(now, ": [executor_v5] REJECTED scaling, VM ", vmId, " could not be resolved");
-            return false;
-        }
-
         int[] mipsTiers = actionSpace.getMipsTiers();
-        if (mipsTiers == null || tierIndex < 0 || tierIndex >= mipsTiers.length) {
-            Log.printlnConcat(now, ": [executor_v5] REJECTED scaling, tierIndex ", tierIndex, " out of bounds for VM ", vmId);
+
+        if (vm == null || mipsTiers == null || tierIndex < 0 || tierIndex >= mipsTiers.length) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v5] rejected, unresolved vmId=", vmId, " or bad tierIndex=", tierIndex);
             return false;
         }
 
         double newValue = mipsTiers[tierIndex];
-        boolean succeeded = actionSpace.requestMipsScaling(vm, newValue);
+        boolean succeeded;
+        try {
+            succeeded = actionSpace.requestMipsScaling(vm, newValue);
+        } catch (Exception e) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v5] requestMipsScaling threw, vmId=", vmId, " newValue=", newValue);
+            return false;
+        }
+
         if (succeeded) {
             successfulActionCount++;
         }
 
-        Log.printlnConcat(now, ": [executor_v5] ATTEMPTED requestMipsScaling vm=", vmId, " newValue=", newValue, " succeeded=", succeeded);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v5] attempted requestMipsScaling, vmId=", vmId, " newValue=", newValue, " succeeded=", succeeded);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "scale VM MIPS tier";
+        return "scale VM MIPS to tier value";
     }
 
     @Override

@@ -1,65 +1,67 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
 import java.util.List;
 
-// Variant 4: VM-level scale-up headroom fraction.
-// Counts how many of the three scalable dimensions (MIPS, RAM, BW) still
-// have a next tier available for this VM (getNext*Tier != -1 sentinel),
-// expressed as a fraction of 3. This is a vertical-scaling capacity signal:
-// a VM at 0.0 is already maxed on every dimension and vertical scaling is a
-// dead end for it, whereas 1.0 has full room to grow. Distinct from
-// monitor_v3's volatility metric -- this describes available ceiling, not
-// observed behaviour -- and shares GUID 1300 with it deliberately (both are
-// VM-level, level 3, but semantically different; consumers must key off
-// outputSemantic() to tell them apart, not the guid alone).
+/**
+ * VM-level monitor.
+ *
+ * Approach: contention efficiency. Compares a VM's actual effective
+ * throughput against its nominal share of host capacity (host MIPS-per-PE
+ * multiplied by the VM's own PE count). Unlike a raw utilisation reading,
+ * this is a relative signal: a value near 1.0 means the VM is getting
+ * close to the throughput it is nominally entitled to, while a value well
+ * below 1.0 means something on the host (co-tenant contention,
+ * oversubscription) is suppressing the VM's real throughput even if the
+ * VM's own utilisation counter looks unremarkable.
+ */
 public class monitor_v4 implements Monitor<double[]> {
+
+    private static final double EPSILON = 1e-9;
+    private static final String SEMANTIC = "vm-hostContentionEfficiency-throughputRatio";
+    private static final int GUID = 1300;
 
     @Override
     public double[] observe(ReadSpace readSpace) {
         List<GuestEntity> vms = readSpace.getVmList();
-        double[] headroom = new double[vms.size()];
+        double[] result = new double[vms.size()];
 
+        double sum = 0.0;
         for (int i = 0; i < vms.size(); i++) {
             GuestEntity vm = vms.get(i);
 
-            int dimsWithRoom = 0;
-            if (readSpace.getNextMipsTier(vm) != -1.0) {
-                dimsWithRoom++;
-            }
-            if (readSpace.getNextRamTier(vm) != -1.0) {
-                dimsWithRoom++;
-            }
-            if (readSpace.getNextBwTier(vm) != -1.0) {
-                dimsWithRoom++;
+            double effectiveThroughput = readSpace.getVmEffectiveThroughput(vm);
+            double hostCapacityPerPe = readSpace.getHostCapacity(vm);
+            int numPes = readSpace.getVmNumberOfPes(vm);
+            double nominalShare = hostCapacityPerPe * numPes;
+
+            double efficiency = effectiveThroughput / (nominalShare + EPSILON);
+            if (efficiency > 1.0) {
+                efficiency = 1.0;
+            } else if (efficiency < 0.0) {
+                efficiency = 0.0;
             }
 
-            headroom[i] = dimsWithRoom / 3.0;
+            result[i] = efficiency;
+            sum += efficiency;
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v4] vm scale-up headroom fraction computed for ", vms.size(), " vms (index-aligned with getVmList).");
-        return headroom;
+        double mean = vms.isEmpty() ? 0.0 : sum / vms.size();
+        String message = "vms=" + vms.size() + " meanHostContentionEfficiency=" + mean;
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v4] ", message);
+
+        return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "3-vmScaleUpHeadroomFraction-countOfMipsRamBwDimsWithNextTierAvailable_divBy3";
+        return SEMANTIC;
     }
 
     @Override
     public int outputGuid() {
-        return 1300;
+        return GUID;
     }
-
 }

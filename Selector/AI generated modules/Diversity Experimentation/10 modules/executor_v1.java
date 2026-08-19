@@ -1,19 +1,13 @@
 package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.Cloudlet;
 
-// Variant angle: moveCloudlet, guarded against no-op moves (same source/target VM)
-// and against moving a cloudlet or VM reference that cannot be resolved.
 public class executor_v1 implements Executor<int[]> {
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        double now = actionSpace.getNow();
-
         if (actions == null || actions.length != 3) {
-            Log.printlnConcat(now, ": [executor_v1] REJECTED malformed payload, expected {cloudletId, fromVmId, toVmId}");
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] rejected malformed payload, expected 3 ints");
             return false;
         }
 
@@ -21,22 +15,14 @@ public class executor_v1 implements Executor<int[]> {
         int fromVmId = actions[1];
         int toVmId = actions[2];
 
-        if (fromVmId == toVmId) {
-            Log.printlnConcat(now, ": [executor_v1] SKIPPED no-op move, cloudlet ", cloudletId, " source and target VM are both ", fromVmId);
+        try {
+            actionSpace.moveCloudlet(cloudletId, fromVmId, toVmId);
+        } catch (Exception e) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] moveCloudlet threw, cloudletId=", cloudletId, " fromVmId=", fromVmId, " toVmId=", toVmId);
             return false;
         }
 
-        Cloudlet cl = actionSpace.getCloudletById(cloudletId);
-        GuestEntity fromVm = actionSpace.getVmById(fromVmId);
-        GuestEntity toVm = actionSpace.getVmById(toVmId);
-
-        if (cl == null || fromVm == null || toVm == null) {
-            Log.printlnConcat(now, ": [executor_v1] REJECTED move, cloudlet ", cloudletId, " or VM ", fromVmId, "/", toVmId, " could not be resolved");
-            return false;
-        }
-
-        actionSpace.moveCloudlet(cloudletId, fromVmId, toVmId);
-        Log.printlnConcat(now, ": [executor_v1] ATTEMPTED moveCloudlet cloudlet=", cloudletId, " from=", fromVmId, " to=", toVmId);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] attempted moveCloudlet, cloudletId=", cloudletId, " fromVmId=", fromVmId, " toVmId=", toVmId);
         return true;
     }
 

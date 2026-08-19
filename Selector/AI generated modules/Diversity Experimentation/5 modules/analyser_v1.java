@@ -1,55 +1,60 @@
 package org.cloudbus.cloudsim.examples;// always include
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.HostEntity;
+import java.util.List;
 
-/**
- * Variant 1 - Host level, fixed global thresholds.
- * Simplest possible boundary policy: a host is overloaded above a fixed
- * utilisation ratio and underloaded below a fixed ratio, regardless of how
- * the rest of the population is behaving this tick.
- */
+// Strategy: static absolute-threshold classifier.
+// Fixed domain-informed cutoffs on host CPU utilisation. Simplest possible
+// baseline: no adaptivity, no history. Also folds in a hard override -
+// a failed host is always reported OVERLOADED regardless of its utilisation
+// figure, since it cannot be trusted to safely absorb further work.
 public class analyser_v1 implements Analyser<double[], LoadState[]> {
+
+    private static final String MODULE_NAME = "analyser_v1";
 
     private static final int INPUT_GUID = 1200;
     private static final int OUTPUT_GUID = 2200;
-    private static final String INPUT_SEMANTIC = "host-cpu-utilization-ratio-fraction-of-host-total-mips-in-use";
-    private static final String OUTPUT_SEMANTIC = "host-load-classification-balanced-under-over";
+    private static final String INPUT_SEMANTIC = "host-cpu-utilization-ratio";
+    private static final String OUTPUT_SEMANTIC = "host-load-static-threshold-classification";
 
-    private static final double OVERLOAD_THRESHOLD = 0.80;
-    private static final double UNDERLOAD_THRESHOLD = 0.20;
+    private static final double LOW_THRESHOLD = 0.25;
+    private static final double HIGH_THRESHOLD = 0.80;
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
+        List<HostEntity> hosts = readSpace.getAllHosts();
         int n = metrics.length;
-        LoadState[] states = new LoadState[n];
-
-        int overloaded = 0;
-        int underloaded = 0;
-        int balanced = 0;
+        LoadState[] result = new LoadState[n];
 
         for (int i = 0; i < n; i++) {
             double util = metrics[i];
-            LoadState state;
 
-            if (util > OVERLOAD_THRESHOLD) {
-                state = LoadState.OVERLOADED;
-            } else if (util < UNDERLOAD_THRESHOLD) {
-                state = LoadState.UNDERLOADED;
-            } else {
-                state = LoadState.BALANCED;
+            boolean failed = false;
+            if (hosts != null && i < hosts.size()) {
+                failed = readSpace.isHostFailed(hosts.get(i));
             }
 
-            states[i] = state;
-            if (state == LoadState.OVERLOADED) overloaded++;
-            else if (state == LoadState.UNDERLOADED) underloaded++;
-            else balanced++;
+            if (failed) {
+                result[i] = LoadState.OVERLOADED;
+                continue;
+            }
+
+            if (Double.isNaN(util)) {
+                result[i] = LoadState.BALANCED;
+            } else if (util >= HIGH_THRESHOLD) {
+                result[i] = LoadState.OVERLOADED;
+            } else if (util <= LOW_THRESHOLD) {
+                result[i] = LoadState.UNDERLOADED;
+            } else {
+                result[i] = LoadState.BALANCED;
+            }
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [analyser_v1] fixed-threshold host classification complete -> ",
-                n, " hosts, overloaded=", overloaded, ", underloaded=", underloaded, ", balanced=", balanced);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] classified ", n,
+                " hosts using static thresholds low=", LOW_THRESHOLD, " high=", HIGH_THRESHOLD);
 
-        return states;
+        return result;
     }
 
     @Override

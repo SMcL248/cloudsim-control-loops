@@ -1,62 +1,61 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
 import java.util.List;
 
-// Variant 1: host-level CPU utilisation ratio.
-// Reports how much of each host's total MIPS capacity is currently in use.
-// Hosts that are off or failed are not meaningfully "utilised" in the
-// scheduling sense, so they are flagged with the -1.0 sentinel instead of
-// a misleading 0.0, keeping "idle but healthy" distinct from "unusable".
+/**
+ * Host-level monitor.
+ *
+ * Approach: power-normalised load. Reports each host's instantaneous power
+ * draw as a fraction of that host's own maximum power draw. Because power
+ * curves are non-linear and host-specific (idle floor, slope, ceiling),
+ * two hosts at the same CPU utilisation can sit at very different points
+ * on their own power curve. This metric surfaces "closeness to power
+ * ceiling" directly, which raw utilisation cannot.
+ */
 public class monitor_v1 implements Monitor<double[]> {
+
+    private static final double EPSILON = 1e-9;
+    private static final String SEMANTIC = "host-powerStressRatio-instant";
+    private static final int GUID = 1200;
 
     @Override
     public double[] observe(ReadSpace readSpace) {
         List<HostEntity> hosts = readSpace.getAllHosts();
-        double[] util = new double[hosts.size()];
+        double[] result = new double[hosts.size()];
 
+        double sum = 0.0;
         for (int i = 0; i < hosts.size(); i++) {
             HostEntity host = hosts.get(i);
-            double totalMips = readSpace.getHostTotalMips(host);
 
-            if (readSpace.isHostFailed(host) || readSpace.isHostPoweredDown(host) || totalMips <= 0.0) {
-                util[i] = -1.0;
-            } else {
-                double availableMips = readSpace.getHostAvailableMips(host);
-                double u = 1.0 - (availableMips / totalMips);
-                if (u < 0.0) {
-                    u = 0.0;
-                }
-                if (u > 1.0) {
-                    u = 1.0;
-                }
-                util[i] = u;
+            double maxPower = readSpace.getHostMaxPower(host);
+            double currentPower = readSpace.getHostPower(host);
+
+            double ratio = currentPower / (maxPower + EPSILON);
+            if (ratio < 0.0) {
+                ratio = 0.0;
             }
+
+            result[i] = ratio;
+            sum += ratio;
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v1] host cpu utilisation ratio computed for ", hosts.size(), " hosts (index-aligned with getAllHosts).");
-        return util;
+        double mean = hosts.isEmpty() ? 0.0 : sum / hosts.size();
+        String message = "hosts=" + hosts.size() + " meanPowerStressRatio=" + mean;
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v1] ", message);
+
+        return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "2-hostCpuUtilRatio-fractionOfTotalMipsCurrentlyInUse_negOneIfOffOrFailed";
+        return SEMANTIC;
     }
 
     @Override
     public int outputGuid() {
-        return 1200;
+        return GUID;
     }
-
 }

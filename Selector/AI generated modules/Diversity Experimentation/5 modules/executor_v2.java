@@ -1,61 +1,40 @@
-package org.cloudbus.cloudsim.examples;
+package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
 
-// Executor variant implementing requestVmMigration (GUID suffix 02).
-// Payload: {vmId, targetHostId}
 public class executor_v2 implements Executor<int[]> {
-
-    private static final int EXPECTED_LENGTH = 2;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        if (actions == null || actions.length != EXPECTED_LENGTH) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] rejected payload, expected 2 ints {vmId, targetHostId} but got length ",
-                    actions == null ? "null" : actions.length);
+        if (actions == null || actions.length != 3) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] Malformed payload for requestVmCreation, expected 3 ints, action not attempted.");
             return false;
         }
 
-        int vmId = actions[0];
-        int targetHostId = actions[1];
+        int tierIndex = actions[0];
+        int sizeTierIndex = actions[1];
+        int datacenterId = actions[2];
 
-        GuestEntity vm = actionSpace.getVmById(vmId);
-        HostEntity targetHost = actionSpace.getHostById(targetHostId);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] Requesting VM creation with mips/ram/bw tier ", tierIndex, ", size tier ", sizeTierIndex, ", in datacenter ", datacenterId, ".");
+        GuestEntity vm = actionSpace.requestVmCreation(tierIndex, sizeTierIndex, datacenterId);
 
-        if (vm == null || targetHost == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] skipped migration, unknown id(s). vm=", vmId, " host=", targetHostId);
-            return false;
+        if (vm == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] VM creation request returned null, tier/size/datacenter combination was invalid.");
+        } else {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] VM creation request accepted, new VM id ", actionSpace.getId(vm), ".");
         }
 
-        if (actionSpace.isVmMigrating(vm)) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] skipped migration, vm ", vmId, " is already migrating");
-            return false;
-        }
-
-        if (actionSpace.isHostFailed(targetHost) || actionSpace.isHostPermanentlyDead(targetHost)) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] skipped migration, target host ", targetHostId, " is failed or permanently dead");
-            return false;
-        }
-
-        if (!actionSpace.canMigrateGuestToHost(targetHost, vm)) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] skipped migration, target host ", targetHostId, " lacks capacity for vm ", vmId);
-            return false;
-        }
-
-        actionSpace.requestVmMigration(vm, targetHost);
-        Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] requested migration of vm ", vmId, " to host ", targetHostId);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "requestVmMigration action payload {vmId, targetHostId}";
+        return "requestVmCreation";
     }
 
     @Override
     public int inputGuid() {
-        return 3002;
+        return 3003;
     }
 }

@@ -2,13 +2,20 @@ package org.cloudbus.cloudsim.examples;
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.HostEntity;
+import org.cloudbus.cloudsim.core.GuestEntity;
 import java.util.List;
 
-// Host-level monitor: bottleneck headroom score.
-// For each host, computes the fractional headroom remaining on each of
-// MIPS, RAM, and Bandwidth, then reports the minimum of the three. This
-// surfaces whichever resource dimension is closest to exhaustion on that
-// host, rather than averaging dimensions together and hiding a tight one.
+/**
+ * Host-level monitor. PEs degrade throughput under load rather than
+ * hard-rejecting work, so a host can end up hosting guests that, on
+ * paper, request more MIPS in aggregate than the host actually
+ * provides. This metric sums the provisioned MIPS request of every VM
+ * resident on the host and divides by the host's total MIPS capacity.
+ * A value above 1.0 means the host is structurally overcommitted: its
+ * guests will compete for cycles even before accounting for their
+ * real-time utilisation. This is a static, demand-side signal, distinct
+ * from live headroom readings which only reflect the current instant.
+ */
 public class monitor_v4 implements Monitor<double[]> {
 
     @Override
@@ -19,37 +26,26 @@ public class monitor_v4 implements Monitor<double[]> {
         for (int i = 0; i < hosts.size(); i++) {
             HostEntity host = hosts.get(i);
 
-            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)
-                    || readSpace.isHostPoweredDown(host)) {
-                result[i] = -1.0;
-                continue;
-            }
-
             double totalMips = readSpace.getHostTotalMips(host);
-            double totalRam = readSpace.getHostTotalRam(host);
-            double totalBw = readSpace.getHostTotalBw(host);
+            double requestedSum = 0.0;
 
-            if (totalMips <= 0.0 || totalRam <= 0.0 || totalBw <= 0.0) {
-                result[i] = -1.0;
-                continue;
+            List<GuestEntity> vms = readSpace.getVmListForHost(host);
+            if (vms != null) {
+                for (GuestEntity vm : vms) {
+                    requestedSum += readSpace.getVmRequestedMips(vm);
+                }
             }
 
-            double mipsFrac = readSpace.getHostAvailableMips(host) / totalMips;
-            double ramFrac = readSpace.getHostAvailableRam(host) / totalRam;
-            double bwFrac = readSpace.getHostAvailableBw(host) / totalBw;
-
-            result[i] = Math.min(mipsFrac, Math.min(ramFrac, bwFrac));
+            result[i] = totalMips > 0 ? requestedSum / totalMips : 0.0;
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v4] computed host bottleneck headroom score for ",
-                hosts.size(), " hosts");
-
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v4] ", "computed soft-overcommit pressure for ", hosts.size(), " hosts");
         return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "host-bottleneck-headroom-min-frac-mips-ram-bw";
+        return "host-soft-overcommit-pressure-requested-mips-over-capacity";
     }
 
     @Override

@@ -1,54 +1,60 @@
-package org.cloudbus.cloudsim.examples;
+package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
-// Executor variant implementing requestVmCreation (GUID suffix 03).
-// Payload: {tierIndex, sizeTierIndex, datacenterId}
-// Note: requestVmCreation returns GuestEntity, not boolean, so
-// getSuccessfulActionCount() is left at its default (this action type
-// has no finer success signal to report beyond execute()'s own boolean).
 public class executor_v3 implements Executor<int[]> {
 
-    private static final int EXPECTED_LENGTH = 3;
+    private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        if (actions == null || actions.length != EXPECTED_LENGTH) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v3] rejected payload, expected 3 ints {tierIndex, sizeTierIndex, datacenterId} but got length ",
-                    actions == null ? "null" : actions.length);
+        if (actions == null || actions.length != 2) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v3] Malformed payload for requestMipsScaling, expected 2 ints, action not attempted.");
             return false;
         }
 
-        int tierIndex = actions[0];
-        int sizeTierIndex = actions[1];
-        int datacenterId = actions[2];
+        int vmId = actions[0];
+        int tierIndex = actions[1];
 
-        int mipsTierCount = actionSpace.getMipsTiers().length;
-        if (tierIndex < 0 || tierIndex >= mipsTierCount) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v3] skipped creation, tierIndex ", tierIndex,
-                    " outside known tier range 0..", mipsTierCount - 1);
+        GuestEntity vm = actionSpace.getVmById(vmId);
+        if (vm == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v3] VM ", vmId, " could not be resolved, MIPS scaling not attempted.");
             return false;
         }
 
-        GuestEntity created = actionSpace.requestVmCreation(tierIndex, sizeTierIndex, datacenterId);
-        if (created == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v3] vm creation attempted but rejected by ActionSpace. tier=",
-                    tierIndex, " sizeTier=", sizeTierIndex, " datacenter=", datacenterId);
+        int[] mipsTiers = actionSpace.getMipsTiers();
+        if (tierIndex < 0 || tierIndex >= mipsTiers.length) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v3] Tier index ", tierIndex, " out of range for VM ", vmId, ", MIPS scaling not attempted.");
+            return false;
+        }
+
+        double newValue = mipsTiers[tierIndex];
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v3] Requesting MIPS scaling of VM ", vmId, " to tier value ", newValue, ".");
+        boolean success = actionSpace.requestMipsScaling(vm, newValue);
+
+        if (success) {
+            successfulActionCount++;
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v3] MIPS scaling of VM ", vmId, " succeeded.");
         } else {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v3] created vm ", actionSpace.getId(created),
-                    " tier=", tierIndex, " sizeTier=", sizeTierIndex, " datacenter=", datacenterId);
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v3] MIPS scaling of VM ", vmId, " was rejected by ActionSpace.");
         }
+
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "requestVmCreation action payload {tierIndex, sizeTierIndex, datacenterId}";
+        return "requestMipsScaling";
     }
 
     @Override
     public int inputGuid() {
-        return 3003;
+        return 3005;
+    }
+
+    @Override
+    public int getSuccessfulActionCount() {
+        return successfulActionCount;
     }
 }

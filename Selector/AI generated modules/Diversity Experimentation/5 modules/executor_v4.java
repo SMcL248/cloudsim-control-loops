@@ -1,22 +1,16 @@
-package org.cloudbus.cloudsim.examples;
+package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import java.util.List;
 
-// Executor variant implementing requestVmDestruction (GUID suffix 04).
-// Payload: {vmId}
-// Note: destroying a VM discards any Cloudlet workload still allocated to it.
 public class executor_v4 implements Executor<int[]> {
 
-    private static final int EXPECTED_LENGTH = 1;
+    private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        if (actions == null || actions.length != EXPECTED_LENGTH) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] rejected payload, expected 1 int {vmId} but got length ",
-                    actions == null ? "null" : actions.length);
+        if (actions == null || actions.length != 1) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] Malformed payload for requestPeAllocation, expected 1 int, action not attempted.");
             return false;
         }
 
@@ -24,28 +18,35 @@ public class executor_v4 implements Executor<int[]> {
         GuestEntity vm = actionSpace.getVmById(vmId);
 
         if (vm == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] skipped destruction, unknown vm id ", vmId);
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] VM ", vmId, " could not be resolved, PE allocation not attempted.");
             return false;
         }
 
-        List<Cloudlet> orphanedWork = actionSpace.getVmCloudletList(vm);
-        if (!orphanedWork.isEmpty()) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] warning, destroying vm ", vmId,
-                    " will discard ", orphanedWork.size(), " assigned cloudlet(s)");
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] Requesting PE allocation for VM ", vmId, ".");
+        boolean success = actionSpace.requestPeAllocation(vm);
+
+        if (success) {
+            successfulActionCount++;
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] PE allocation for VM ", vmId, " succeeded.");
+        } else {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] PE allocation for VM ", vmId, " was rejected by ActionSpace.");
         }
 
-        actionSpace.requestVmDestruction(vm);
-        Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] requested destruction of vm ", vmId);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "requestVmDestruction action payload {vmId}";
+        return "requestPeAllocation";
     }
 
     @Override
     public int inputGuid() {
-        return 3004;
+        return 3008;
+    }
+
+    @Override
+    public int getSuccessfulActionCount() {
+        return successfulActionCount;
     }
 }

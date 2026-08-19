@@ -3,19 +3,14 @@ package org.cloudbus.cloudsim.examples;// always include
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
-// Variant angle: requestPeDeallocation, guarded by refusing to strip a VM down
-// to zero PEs (checks getVmNumberOfPes(vm) > 1 first), which a naive passthrough
-// would allow and which would leave the VM unable to process any workload.
 public class executor_v8 implements Executor<int[]> {
 
     private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        double now = actionSpace.getNow();
-
         if (actions == null || actions.length != 1) {
-            Log.printlnConcat(now, ": [executor_v8] REJECTED malformed payload, expected {vmId}");
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v8] rejected malformed payload, expected 1 int");
             return false;
         }
 
@@ -23,32 +18,34 @@ public class executor_v8 implements Executor<int[]> {
         GuestEntity vm = actionSpace.getVmById(vmId);
 
         if (vm == null) {
-            Log.printlnConcat(now, ": [executor_v8] REJECTED PE deallocation, VM ", vmId, " could not be resolved");
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v8] rejected, unresolved vmId=", vmId);
             return false;
         }
 
-        if (actionSpace.getVmNumberOfPes(vm) <= 1) {
-            Log.printlnConcat(now, ": [executor_v8] SKIPPED PE deallocation, VM ", vmId, " would be left with zero PEs");
+        boolean succeeded;
+        try {
+            succeeded = actionSpace.requestPeAllocation(vm);
+        } catch (Exception e) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v8] requestPeAllocation threw, vmId=", vmId);
             return false;
         }
 
-        boolean succeeded = actionSpace.requestPeDeallocation(vm);
         if (succeeded) {
             successfulActionCount++;
         }
 
-        Log.printlnConcat(now, ": [executor_v8] ATTEMPTED requestPeDeallocation vm=", vmId, " succeeded=", succeeded);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v8] attempted requestPeAllocation, vmId=", vmId, " succeeded=", succeeded);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "deallocate PE from VM";
+        return "allocate additional PE to VM";
     }
 
     @Override
     public int inputGuid() {
-        return 3009;
+        return 3008;
     }
 
     @Override

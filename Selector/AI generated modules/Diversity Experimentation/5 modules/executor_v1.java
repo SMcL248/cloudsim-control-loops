@@ -1,58 +1,45 @@
-package org.cloudbus.cloudsim.examples;
+package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import java.util.List;
+import org.cloudbus.cloudsim.core.HostEntity;
 
-// Executor variant implementing moveCloudlet (GUID suffix 01).
-// Payload: {cloudletId, fromVmId, toVmId}
 public class executor_v1 implements Executor<int[]> {
-
-    private static final int EXPECTED_LENGTH = 3;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        if (actions == null || actions.length != EXPECTED_LENGTH) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] rejected payload, expected 3 ints {cloudletId, fromVmId, toVmId} but got length ",
-                    actions == null ? "null" : actions.length);
+        if (actions == null || actions.length != 2) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] Malformed payload for requestVmMigration, expected 2 ints, action not attempted.");
             return false;
         }
 
-        int cloudletId = actions[0];
-        int fromVmId = actions[1];
-        int toVmId = actions[2];
+        int vmId = actions[0];
+        int targetHostId = actions[1];
 
-        Cloudlet cloudlet = actionSpace.getCloudletById(cloudletId);
-        GuestEntity fromVm = actionSpace.getVmById(fromVmId);
-        GuestEntity toVm = actionSpace.getVmById(toVmId);
+        GuestEntity vm = actionSpace.getVmById(vmId);
+        HostEntity targetHost = actionSpace.getHostById(targetHostId);
 
-        if (cloudlet == null || fromVm == null || toVm == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] skipped move, unknown id(s). cloudlet=", cloudletId,
-                    " from=", fromVmId, " to=", toVmId);
+        if (vm == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] VM ", vmId, " could not be resolved, migration not attempted.");
+            return false;
+        }
+        if (targetHost == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] Host ", targetHostId, " could not be resolved, migration not attempted.");
             return false;
         }
 
-        List<Cloudlet> fromVmCloudlets = actionSpace.getVmCloudletList(fromVm);
-        if (!fromVmCloudlets.contains(cloudlet)) {
-            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] skipped move, cloudlet ", cloudletId,
-                    " is not currently assigned to source vm ", fromVmId);
-            return false;
-        }
-
-        actionSpace.moveCloudlet(cloudletId, fromVmId, toVmId);
-        Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] moved cloudlet ", cloudletId,
-                " from vm ", fromVmId, " to vm ", toVmId);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] Requesting migration of VM ", vmId, " to host ", targetHostId, ".");
+        actionSpace.requestVmMigration(vm, targetHost);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "moveCloudlet action payload {cloudletId, fromVmId, toVmId}";
+        return "requestVmMigration";
     }
 
     @Override
     public int inputGuid() {
-        return 3001;
+        return 3002;
     }
 }

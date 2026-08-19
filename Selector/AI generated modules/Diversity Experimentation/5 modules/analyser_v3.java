@@ -1,90 +1,76 @@
 package org.cloudbus.cloudsim.examples;// always include
 
-// Import whats needed
-import java.util.Arrays;
 import org.cloudbus.cloudsim.Log;
+import java.util.Arrays;
 
-/**
- * Variant 3 - Cloudlet level, interquartile-range (Tukey fence) thresholds.
- * A cloudlet with disproportionately more work remaining than its peers this
- * tick is falling behind (overloaded); one with disproportionately little
- * remaining is nearly finished (underloaded). Fences are derived from the
- * observed distribution of remaining-length fractions, not fixed constants.
- */
+// Strategy: quantile / relative-rank classifier.
+// Rather than parametric mean/stddev, this variant is rank-based and robust
+// to outliers: it sorts the batch and uses the interquartile boundaries
+// (Q1/Q3) as classification cutoffs. Cloudlets in the bottom quartile of
+// progress relative to their peers are read as starved (OVERLOADED); those
+// in the top quartile are read as coasting with spare capacity
+// (UNDERLOADED).
 public class analyser_v3 implements Analyser<double[], LoadState[]> {
+
+    private static final String MODULE_NAME = "analyser_v3";
 
     private static final int INPUT_GUID = 1400;
     private static final int OUTPUT_GUID = 2400;
-    private static final String INPUT_SEMANTIC = "cloudlet-remaining-length-fraction-of-total-length";
-    private static final String OUTPUT_SEMANTIC = "cloudlet-load-classification-balanced-under-over";
+    private static final String INPUT_SEMANTIC = "cloudlet-progress-ratio";
+    private static final String OUTPUT_SEMANTIC = "cloudlet-progress-quantile-classification";
 
-    private static final double IQR_MULTIPLIER = 1.5;
-    private static final int MIN_SAMPLE_FOR_IQR = 4;
+    private static final double LOWER_QUANTILE = 0.25;
+    private static final double UPPER_QUANTILE = 0.75;
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
         int n = metrics.length;
-        LoadState[] states = new LoadState[n];
+        LoadState[] result = new LoadState[n];
 
-        double lowerFence;
-        double upperFence;
-
-        if (n >= MIN_SAMPLE_FOR_IQR) {
-            double[] sorted = Arrays.copyOf(metrics, n);
-            Arrays.sort(sorted);
-            double q1 = percentile(sorted, 0.25);
-            double q3 = percentile(sorted, 0.75);
-            double iqr = q3 - q1;
-            lowerFence = q1 - IQR_MULTIPLIER * iqr;
-            upperFence = q3 + IQR_MULTIPLIER * iqr;
-        } else {
-            // Too few active cloudlets this tick for quartiles to be
-            // meaningful; fall back to treating everyone as on-pace.
-            lowerFence = Double.NEGATIVE_INFINITY;
-            upperFence = Double.POSITIVE_INFINITY;
+        if (n == 0) {
+            return result;
         }
 
-        int overloaded = 0;
-        int underloaded = 0;
-        int balanced = 0;
+        double[] sorted = Arrays.copyOf(metrics, n);
+        Arrays.sort(sorted);
+
+        double q1 = percentile(sorted, LOWER_QUANTILE);
+        double q3 = percentile(sorted, UPPER_QUANTILE);
 
         for (int i = 0; i < n; i++) {
-            double remainingFraction = metrics[i];
-            LoadState state;
-
-            if (remainingFraction > upperFence) {
-                state = LoadState.OVERLOADED;
-            } else if (remainingFraction < lowerFence) {
-                state = LoadState.UNDERLOADED;
-            } else {
-                state = LoadState.BALANCED;
+            double v = metrics[i];
+            if (Double.isNaN(v)) {
+                result[i] = LoadState.BALANCED;
+                continue;
             }
-
-            states[i] = state;
-            if (state == LoadState.OVERLOADED) overloaded++;
-            else if (state == LoadState.UNDERLOADED) underloaded++;
-            else balanced++;
+            if (v <= q1) {
+                result[i] = LoadState.OVERLOADED;
+            } else if (v >= q3) {
+                result[i] = LoadState.UNDERLOADED;
+            } else {
+                result[i] = LoadState.BALANCED;
+            }
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [analyser_v3] IQR cloudlet classification complete -> ",
-                n, " cloudlets, overloaded=", overloaded, ", underloaded=", underloaded, ", balanced=", balanced);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] classified ", n,
+                " cloudlets by quantile; q1=", q1, " q3=", q3);
 
-        return states;
+        return result;
     }
 
-    // Linear-interpolation percentile over an already-sorted array.
-    private double percentile(double[] sorted, double p) {
-        if (sorted.length == 1) {
-            return sorted[0];
+    private double percentile(double[] sortedValues, double p) {
+        int n = sortedValues.length;
+        if (n == 1) {
+            return sortedValues[0];
         }
-        double rank = p * (sorted.length - 1);
-        int lowIndex = (int) Math.floor(rank);
-        int highIndex = (int) Math.ceil(rank);
-        if (lowIndex == highIndex) {
-            return sorted[lowIndex];
+        double rank = p * (n - 1);
+        int lowerIndex = (int) Math.floor(rank);
+        int upperIndex = (int) Math.ceil(rank);
+        if (lowerIndex == upperIndex) {
+            return sortedValues[lowerIndex];
         }
-        double fraction = rank - lowIndex;
-        return sorted[lowIndex] + fraction * (sorted[highIndex] - sorted[lowIndex]);
+        double weight = rank - lowerIndex;
+        return sortedValues[lowerIndex] * (1 - weight) + sortedValues[upperIndex] * weight;
     }
 
     @Override

@@ -1,97 +1,110 @@
-package org.cloudbus.cloudsim.examples;
+package org.cloudbus.cloudsim.examples;// always include
 
-import java.util.List;
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.HostEntity;
+import org.cloudbus.cloudsim.core.GuestEntity;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
 
+/*
+ * Variant: analyser_v9
+ * Level: VM
+ * Metric: CPU utilisation fraction
+ * Strategy: natural-breaks (largest-gap) clustering, a purely data-driven
+ * alternative to moment-based (mean/std) or order-based (percentile)
+ * boundaries. The VMs are sorted by utilisation and the two biggest gaps
+ * between consecutive sorted values are used as the cluster boundaries,
+ * splitting the batch into whatever three groups the data itself naturally
+ * falls into this cycle - there is no fixed target proportion for how many
+ * VMs end up in each state.
+ */
 public class analyser_v9 implements Analyser<double[], LoadState[]> {
-
-    private static final int INPUT_GUID = 1200;
-    private static final int OUTPUT_GUID = 2200;
-    private static final String INPUT_SEMANTIC = "host-mipsDemand-absolute";
-    private static final String OUTPUT_SEMANTIC = "host-loadState-capacityNormalizedZscore";
-
-    private static final double Z_HIGH = 1.0;
-    private static final double Z_LOW = -1.0;
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
-        List<HostEntity> hosts = readSpace.getAllHosts();
         int n = metrics.length;
-        LoadState[] result = new LoadState[n];
+        LoadState[] states = new LoadState[n];
 
         if (n == 0) {
-            Log.printlnConcat(readSpace.getNow(), ": [analyser_v9] no hosts to classify.");
-            return result;
+            return states;
+        }
+        if (n < 3) {
+            // Not enough points to form three meaningful clusters; treat
+            // everything as BALANCED rather than guessing.
+            Arrays.fill(states, LoadState.BALANCED);
+            Log.printlnConcat(readSpace.getNow(), ": [analyser_v9] fewer than 3 VMs, defaulting to BALANCED");
+            return states;
         }
 
-        // Convert each host's absolute MIPS demand into a utilisation
-        // fraction of that specific host's own capacity before comparing
-        // across hosts, since raw MIPS demand alone is not comparable
-        // between differently sized hosts.
-        double[] utilisation = new double[n];
+        List<Integer> order = new ArrayList<>();
         for (int i = 0; i < n; i++) {
-            double capacity = (i < hosts.size()) ? readSpace.getHostTotalMips(hosts.get(i)) : 0.0;
-            utilisation[i] = (capacity > 1e-9) ? (metrics[i] / capacity) : 0.0;
+            order.add(i);
         }
+        order.sort(Comparator.comparingDouble(idx -> metrics[idx]));
 
-        double sum = 0.0;
-        for (double u : utilisation) {
-            sum += u;
-        }
-        double mean = sum / n;
-
-        double sqDiffSum = 0.0;
-        for (double u : utilisation) {
-            sqDiffSum += (u - mean) * (u - mean);
-        }
-        double stdDev = Math.sqrt(sqDiffSum / n);
-
-        int overloadedCount = 0;
-        int underloadedCount = 0;
-
-        for (int i = 0; i < n; i++) {
-            if (stdDev < 1e-9) {
-                result[i] = LoadState.BALANCED;
-                continue;
+        // Find the two largest gaps between consecutive sorted values.
+        int firstBreak = -1;
+        int secondBreak = -1;
+        double firstGap = -1.0;
+        double secondGap = -1.0;
+        for (int i = 1; i < n; i++) {
+            double gap = metrics[order.get(i)] - metrics[order.get(i - 1)];
+            if (gap > firstGap) {
+                secondGap = firstGap;
+                secondBreak = firstBreak;
+                firstGap = gap;
+                firstBreak = i;
+            } else if (gap > secondGap) {
+                secondGap = gap;
+                secondBreak = i;
             }
-            double z = (utilisation[i] - mean) / stdDev;
-            if (z >= Z_HIGH) {
-                result[i] = LoadState.OVERLOADED;
-                overloadedCount++;
-            } else if (z <= Z_LOW) {
-                result[i] = LoadState.UNDERLOADED;
-                underloadedCount++;
+        }
+
+        int otherBreak = secondBreak < 0 ? firstBreak : secondBreak;
+        int lowBreak = Math.min(firstBreak, otherBreak);
+        int highBreak = Math.max(firstBreak, otherBreak);
+
+        int overloaded = 0, underloaded = 0, balanced = 0;
+        for (int rank = 0; rank < n; rank++) {
+            int originalIndex = order.get(rank);
+            LoadState state;
+            if (rank < lowBreak) {
+                state = LoadState.UNDERLOADED;
+            } else if (rank >= highBreak) {
+                state = LoadState.OVERLOADED;
             } else {
-                result[i] = LoadState.BALANCED;
+                state = LoadState.BALANCED;
+            }
+            states[originalIndex] = state;
+            switch (state) {
+                case OVERLOADED: overloaded++; break;
+                case UNDERLOADED: underloaded++; break;
+                default: balanced++; break;
             }
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [analyser_v9] classified ", n,
-                " hosts by capacity-normalized z-score (mean util=", mean, ", stdDev=",
-                stdDev, "): ", overloadedCount, " overloaded, ", underloadedCount,
-                " underloaded, ", (n - overloadedCount - underloadedCount), " balanced.");
-
-        return result;
+        Log.printlnConcat(readSpace.getNow(), ": [analyser_v9] natural-breaks classification: ", overloaded, " overloaded, ", underloaded, " underloaded, ", balanced, " balanced");
+        return states;
     }
 
     @Override
     public String inputSemantic() {
-        return INPUT_SEMANTIC;
+        return "vm-cpu-utilization-fraction";
     }
 
     @Override
     public String outputSemantic() {
-        return OUTPUT_SEMANTIC;
+        return "vm-load-state-natural-breaks";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 1300;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 2300;
     }
 }

@@ -1,101 +1,99 @@
-package org.cloudbus.cloudsim.examples;
+package org.cloudbus.cloudsim.examples;// always include
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.GuestEntity;
+import org.cloudbus.cloudsim.Cloudlet;
+import java.util.Arrays;
+import java.util.List;
 
+/*
+ * Variant: analyser_v8
+ * Level: CLOUDLET
+ * Metric: requested PE count
+ * Strategy: trimmed-mean band over cloudlet PE demand. The most extreme 10%
+ * of readings at each end of the sorted distribution are discarded before
+ * the mean/std-dev band is computed, so a handful of unusually wide or
+ * narrow cloudlets cannot distort the band used to judge EVERY cloudlet
+ * (including the trimmed ones themselves, which are still classified
+ * against the resulting robust band).
+ */
 public class analyser_v8 implements Analyser<double[], LoadState[]> {
 
-    private static final int INPUT_GUID = 1300;
-    private static final int OUTPUT_GUID = 2300;
-    private static final String INPUT_SEMANTIC = "vm-cpuUtilFraction-instantaneous";
-    private static final String OUTPUT_SEMANTIC = "vm-loadState-hysteresisMigrationAware";
-
-    private static final double ENTER_OVERLOAD = 0.80;
-    private static final double EXIT_OVERLOAD = 0.60;
-    private static final double ENTER_UNDERLOAD = 0.20;
-    private static final double EXIT_UNDERLOAD = 0.40;
-
-    // Remembers each VM's last classification (keyed by VM id) so thresholds
-    // can be asymmetric (hysteresis) and avoid rapidly flapping between
-    // states from one control loop tick to the next.
-    private final Map<Integer, LoadState> previousState = new HashMap<Integer, LoadState>();
+    private static final double TRIM_FRACTION = 0.10;
+    private static final double K = 1.0;
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
-        List<GuestEntity> vms = readSpace.getVmList();
         int n = metrics.length;
-        LoadState[] result = new LoadState[n];
+        LoadState[] states = new LoadState[n];
 
-        int overloadedCount = 0;
-        int underloadedCount = 0;
-        int migratingSkipped = 0;
+        double[] sorted = Arrays.copyOf(metrics, n);
+        Arrays.sort(sorted);
+        int trimCount = (int) Math.floor(n * TRIM_FRACTION);
+        int fromIndex = Math.min(trimCount, n / 2);
+        int toIndexExclusive = Math.max(n - trimCount, fromIndex);
 
+        double sum = 0.0;
+        int trimmedCount = 0;
+        for (int i = fromIndex; i < toIndexExclusive; i++) {
+            sum += sorted[i];
+            trimmedCount++;
+        }
+
+        if (trimmedCount == 0) {
+            Log.printlnConcat(readSpace.getNow(), ": [analyser_v8] insufficient samples after trimming, defaulting all to BALANCED");
+            Arrays.fill(states, LoadState.BALANCED);
+            return states;
+        }
+
+        double mean = sum / trimmedCount;
+        double sqDiff = 0.0;
+        for (int i = fromIndex; i < toIndexExclusive; i++) {
+            double d = sorted[i] - mean;
+            sqDiff += d * d;
+        }
+        double std = Math.sqrt(sqDiff / trimmedCount);
+
+        int overloaded = 0, underloaded = 0, balanced = 0;
         for (int i = 0; i < n; i++) {
-            GuestEntity vm = (i < vms.size()) ? vms.get(i) : null;
-
-            if (vm != null && readSpace.isVmMigrating(vm)) {
-                // Utilisation readings are unreliable mid-migration; hold the
-                // VM at BALANCED and leave its hysteresis memory untouched.
-                result[i] = LoadState.BALANCED;
-                migratingSkipped++;
-                continue;
-            }
-
-            int vmId = (vm != null) ? readSpace.getId(vm) : i;
-            LoadState last = previousState.get(vmId);
-            double util = metrics[i];
-
-            LoadState next;
-            if (last == LoadState.OVERLOADED) {
-                next = (util >= EXIT_OVERLOAD) ? LoadState.OVERLOADED : LoadState.BALANCED;
-            } else if (last == LoadState.UNDERLOADED) {
-                next = (util <= EXIT_UNDERLOAD) ? LoadState.UNDERLOADED : LoadState.BALANCED;
-            } else if (util >= ENTER_OVERLOAD) {
-                next = LoadState.OVERLOADED;
-            } else if (util <= ENTER_UNDERLOAD) {
-                next = LoadState.UNDERLOADED;
+            LoadState state;
+            if (std < 1e-9) {
+                state = LoadState.BALANCED;
+            } else if (metrics[i] > mean + K * std) {
+                state = LoadState.OVERLOADED;
+            } else if (metrics[i] < mean - K * std) {
+                state = LoadState.UNDERLOADED;
             } else {
-                next = LoadState.BALANCED;
+                state = LoadState.BALANCED;
             }
-
-            result[i] = next;
-            previousState.put(vmId, next);
-
-            if (next == LoadState.OVERLOADED) {
-                overloadedCount++;
-            } else if (next == LoadState.UNDERLOADED) {
-                underloadedCount++;
+            states[i] = state;
+            switch (state) {
+                case OVERLOADED: overloaded++; break;
+                case UNDERLOADED: underloaded++; break;
+                default: balanced++; break;
             }
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [analyser_v8] classified ", n,
-                " VMs with hysteresis thresholds (", overloadedCount, " overloaded, ",
-                underloadedCount, " underloaded, ", migratingSkipped,
-                " skipped mid-migration).");
-
-        return result;
+        Log.printlnConcat(readSpace.getNow(), ": [analyser_v8] trimmed-mean PE-demand classification: mean=", mean, " std=", std, " -> ", overloaded, " overloaded, ", underloaded, " underloaded, ", balanced, " balanced");
+        return states;
     }
 
     @Override
     public String inputSemantic() {
-        return INPUT_SEMANTIC;
+        return "cloudlet-requested-pe-count";
     }
 
     @Override
     public String outputSemantic() {
-        return OUTPUT_SEMANTIC;
+        return "cloudlet-load-state-trimmed-mean";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 1400;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 2400;
     }
 }

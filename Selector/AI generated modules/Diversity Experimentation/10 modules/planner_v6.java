@@ -3,55 +3,80 @@ package org.cloudbus.cloudsim.examples;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 import java.util.List;
 
-// Reactive Vertical MIPS Scaling Planner.
-// Walks the VM-level LoadState[] in order and scales the first OVERLOADED
-// VM up to its next MIPS tier, provided that tier exists and can be
-// resolved to a valid index in the permitted tier list.
+// Strategy: Host-headroom-guarded RAM scale-up.
+// Reacts to VMs whose diagnosis reflects RAM pressure rather than CPU pressure.
+// Before committing to a RAM tier increase, this planner checks whether the VM's
+// current host actually has enough spare RAM to absorb the increment. If the host
+// cannot support it, the request is deferred rather than issued blindly, avoiding
+// pushing a host into resource exhaustion.
 public class planner_v6 implements Planner<LoadState[], int[]> {
-
-    private static final int INPUT_GUID = 2300;
-    private static final int OUTPUT_GUID = 3005;
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-        List<GuestEntity> vms = readSpace.getVmList();
-        int limit = Math.min(diagnosis.length, vms.size());
-        int[] mipsTiers = readSpace.getMipsTiers();
 
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v6] ", "checking RAM-pressured VMs for guarded scale-up");
+
+        List<GuestEntity> vms = readSpace.getVmList();
+        List<HostEntity> hosts = readSpace.getAllHosts();
+        int[] ramTiers = readSpace.getRamTiers();
+
+        int limit = Math.min(diagnosis.length, vms.size());
         for (int i = 0; i < limit; i++) {
+
             if (diagnosis[i] != LoadState.OVERLOADED) {
                 continue;
             }
+
             GuestEntity vm = vms.get(i);
-            double nextTier = readSpace.getNextMipsTier(vm);
-            if (nextTier < 0) {
+
+            double nextRamTierValue = readSpace.getNextRamTier(vm);
+            if (nextRamTierValue < 0) {
                 continue;
             }
-            int tierIndex = findTierIndex(mipsTiers, nextTier);
+
+            double increment = nextRamTierValue - readSpace.getVmRam(vm);
+            if (increment <= 0) {
+                continue;
+            }
+
+            HostEntity host = findHostOf(readSpace, hosts, vm);
+            if (host == null) {
+                continue;
+            }
+
+            if (readSpace.getHostAvailableRam(host) < increment) {
+                Log.printlnConcat(readSpace.getNow(), ": [planner_v6] ", "deferring RAM scale-up, insufficient host headroom for vmId=" + readSpace.getId(vm));
+                continue;
+            }
+
+            int tierIndex = indexOfTier(ramTiers, nextRamTierValue);
             if (tierIndex < 0) {
                 continue;
             }
+
             int vmId = readSpace.getId(vm);
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v6] scaling vm ", vmId, " up to mips tier index ", tierIndex);
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v6] ", "scaling RAM for vmId=" + vmId + " to tier index=" + tierIndex);
             return new int[] { vmId, tierIndex };
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v6] no overloaded vm eligible for mips scale-up");
-        return new int[0];
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v6] ", "no RAM-pressured VM was safe to scale this cycle");
+        return null;
     }
 
-    private int findTierIndex(int[] tiers, double value) {
+    private HostEntity findHostOf(ReadSpace readSpace, List<HostEntity> hosts, GuestEntity vm) {
+        for (HostEntity host : hosts) {
+            if (readSpace.getVmListForHost(host).contains(vm)) {
+                return host;
+            }
+        }
+        return null;
+    }
+
+    private int indexOfTier(int[] tiers, double value) {
         for (int i = 0; i < tiers.length; i++) {
-            if (tiers[i] == Math.round(value)) {
+            if (tiers[i] == value) {
                 return i;
             }
         }
@@ -60,21 +85,21 @@ public class planner_v6 implements Planner<LoadState[], int[]> {
 
     @Override
     public String inputSemantic() {
-        return "vm-loadstate-classification";
+        return "vm-ramheadroom-loadstate";
     }
 
     @Override
     public String outputSemantic() {
-        return "requestMipsScaling";
+        return "vm-ram-scaleup-guarded";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 2300;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 3006;
     }
 }

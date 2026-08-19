@@ -1,76 +1,102 @@
 package org.cloudbus.cloudsim.examples;// always include
 
+// Import whats needed
+import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.GuestEntity;
+import org.cloudbus.cloudsim.core.HostEntity;
 import java.util.List;
 
-import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.HostEntity;
-
-/**
- * planner_v1
- *
- * Strategy: "Safe consolidation power-down"
- * Host-level diagnosis. Among hosts classified UNDERLOADED, selects one that
- * currently hosts zero VMs (so powering it down destroys no workload) and is
- * not already powered down/powering up/failed/dead, preferring the host
- * with the highest current power draw (biggest immediate energy saving).
- * Emits requestHostPowerDown{hostId}, or an empty array if no safe
- * candidate exists.
- */
+// Strategy: migration-based host consolidation.
+// Finds the most heavily loaded OVERLOADED host (by summed VM CPU utilisation), takes its
+// busiest VM, and relocates it to the least-utilised UNDERLOADED host that can actually
+// accept it. Classic reactive load-balancing via live migration.
 public class planner_v1 implements Planner<LoadState[], int[]> {
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-
         List<HostEntity> hosts = readSpace.getAllHosts();
 
-        HostEntity bestCandidate = null;
-        double bestPower = -1.0;
+        int worstHostIdx = -1;
+        double worstUtil = -1.0;
 
-        int limit = Math.min(diagnosis.length, hosts.size());
-        for (int i = 0; i < limit; i++) {
-            if (diagnosis[i] != LoadState.UNDERLOADED) {
-                continue;
-            }
-
+        // Find the most heavily loaded OVERLOADED host by summed VM CPU utilisation.
+        for (int i = 0; i < diagnosis.length && i < hosts.size(); i++) {
+            if (diagnosis[i] != LoadState.OVERLOADED) continue;
             HostEntity host = hosts.get(i);
+            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host) || readSpace.isHostPoweredDown(host)) continue;
 
-            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)) {
-                continue;
+            double totalUtil = 0.0;
+            for (GuestEntity vm : readSpace.getVmListForHost(host)) {
+                totalUtil += readSpace.getVmCpuUtil(vm);
             }
-            if (readSpace.isHostPoweredDown(host) || readSpace.isHostPoweringUp(host)) {
-                continue;
-            }
-            if (!readSpace.getVmListForHost(host).isEmpty()) {
-                // Powering down would destroy hosted VMs and their workloads; skip.
-                continue;
-            }
-
-            double power = readSpace.getHostPower(host);
-            if (power > bestPower) {
-                bestPower = power;
-                bestCandidate = host;
+            if (totalUtil > worstUtil) {
+                worstUtil = totalUtil;
+                worstHostIdx = i;
             }
         }
 
-        if (bestCandidate == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v1] ", "no idle underloaded host found to power down");
+        if (worstHostIdx == -1) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v1] ", "no overloaded host found, no migration planned");
             return new int[0];
         }
 
-        int hostId = readSpace.getId(bestCandidate);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v1] ",
-                "powering down idle underloaded host " + hostId + " drawing " + bestPower + " W");
-        return new int[] { hostId };
+        HostEntity sourceHost = hosts.get(worstHostIdx);
+        List<GuestEntity> sourceVms = readSpace.getVmListForHost(sourceHost);
+
+        GuestEntity busiestVm = null;
+        double busiestUtil = -1.0;
+        for (GuestEntity vm : sourceVms) {
+            if (readSpace.isVmMigrating(vm)) continue;
+            double util = readSpace.getVmCpuUtil(vm);
+            if (util > busiestUtil) {
+                busiestUtil = util;
+                busiestVm = vm;
+            }
+        }
+
+        if (busiestVm == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v1] ", "overloaded host has no movable vm, no migration planned");
+            return new int[0];
+        }
+
+        // Find least-loaded UNDERLOADED host that can actually accept this VM.
+        HostEntity targetHost = null;
+        double lowestUtil = Double.MAX_VALUE;
+        for (int i = 0; i < diagnosis.length && i < hosts.size(); i++) {
+            if (diagnosis[i] != LoadState.UNDERLOADED) continue;
+            HostEntity candidate = hosts.get(i);
+            if (readSpace.isHostFailed(candidate) || readSpace.isHostPermanentlyDead(candidate) || readSpace.isHostPoweredDown(candidate)) continue;
+            if (readSpace.getId(candidate) == readSpace.getId(sourceHost)) continue;
+            if (!readSpace.canMigrateGuestToHost(candidate, busiestVm)) continue;
+
+            double totalMips = readSpace.getHostTotalMips(candidate);
+            double candUtil = totalMips > 0
+                ? (totalMips - readSpace.getHostAvailableMips(candidate)) / totalMips
+                : 1.0;
+            if (candUtil < lowestUtil) {
+                lowestUtil = candUtil;
+                targetHost = candidate;
+            }
+        }
+
+        if (targetHost == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v1] ", "no eligible underloaded host can accept busiest vm, no migration planned");
+            return new int[0];
+        }
+
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v1] planning migration of vm ", readSpace.getId(busiestVm), " from host ", readSpace.getId(sourceHost), " to host ", readSpace.getId(targetHost));
+
+        return new int[] { readSpace.getId(busiestVm), readSpace.getId(targetHost) };
     }
 
     @Override
     public String inputSemantic() {
-        return "host-loadstate-classification";
+        return "host-loadstate-consolidation-signal";
     }
 
     @Override
     public String outputSemantic() {
-        return "host-power-down";
+        return "requestVmMigration";
     }
 
     @Override
@@ -80,6 +106,6 @@ public class planner_v1 implements Planner<LoadState[], int[]> {
 
     @Override
     public int outputGuid() {
-        return 3010;
+        return 3002;
     }
 }

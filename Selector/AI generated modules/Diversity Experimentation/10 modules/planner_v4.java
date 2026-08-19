@@ -3,79 +3,106 @@ package org.cloudbus.cloudsim.examples;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 import java.util.List;
 
-// Sustained-Overload Scale-Out Planner.
-// Computes the fraction of VMs flagged OVERLOADED in the VM-level
-// LoadState[]. When a majority of VMs are overloaded, requests creation of
-// a new, moderately sized VM (middle MIPS/RAM/BW tier) in the same
-// datacenter as the existing fleet, to horizontally absorb demand.
+// Strategy: Occupancy-driven consolidation migration.
+// For the first UNDERLOADED VM found, this planner does not rank destination
+// hosts by spare MIPS capacity. Instead it picks the eligible host that is
+// already hosting the MOST other guests, deliberately crowding light VMs onto
+// already-busy hosts (ties broken by available MIPS headroom). The intent is to
+// actively empty out lightly-used hosts elsewhere, rather than spreading load
+// evenly, so a power-management module can later shut those hosts down.
 public class planner_v4 implements Planner<LoadState[], int[]> {
-
-    private static final int INPUT_GUID = 2300;
-    private static final int OUTPUT_GUID = 3003;
-    private static final double OVERLOAD_RATIO_THRESHOLD = 0.5;
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
+
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v4] ", "scanning for underloaded VMs to consolidate");
+
         List<GuestEntity> vms = readSpace.getVmList();
-        int sampleSize = Math.min(diagnosis.length, vms.size());
-        int overloadedCount = 0;
-        for (int i = 0; i < sampleSize; i++) {
-            if (diagnosis[i] == LoadState.OVERLOADED) {
-                overloadedCount++;
+        List<HostEntity> hosts = readSpace.getAllHosts();
+
+        int limit = Math.min(diagnosis.length, vms.size());
+        for (int i = 0; i < limit; i++) {
+
+            if (diagnosis[i] != LoadState.UNDERLOADED) {
+                continue;
+            }
+
+            GuestEntity vm = vms.get(i);
+
+            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
+                continue;
+            }
+
+            HostEntity currentHost = findHostOf(readSpace, hosts, vm);
+
+            HostEntity busiestHost = null;
+            int busiestCount = -1;
+            double busiestHeadroom = -1;
+
+            for (HostEntity host : hosts) {
+
+                if (host == currentHost) {
+                    continue;
+                }
+                if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)
+                        || readSpace.isHostPoweredDown(host) || readSpace.isHostPoweringUp(host)) {
+                    continue;
+                }
+                if (!readSpace.canMigrateGuestToHost(host, vm)) {
+                    continue;
+                }
+
+                int guestCount = readSpace.getVmListForHost(host).size();
+                double headroom = readSpace.getHostAvailableMips(host);
+
+                if (guestCount > busiestCount
+                        || (guestCount == busiestCount && headroom > busiestHeadroom)) {
+                    busiestCount = guestCount;
+                    busiestHeadroom = headroom;
+                    busiestHost = host;
+                }
+            }
+
+            if (busiestHost != null) {
+                int vmId = readSpace.getId(vm);
+                int hostId = readSpace.getId(busiestHost);
+                Log.printlnConcat(readSpace.getNow(), ": [planner_v4] ", "consolidating vmId=" + vmId + " onto occupied hostId=" + hostId);
+                return new int[] { vmId, hostId };
             }
         }
 
-        double ratio = sampleSize == 0 ? 0.0 : (double) overloadedCount / sampleSize;
-        if (ratio < OVERLOAD_RATIO_THRESHOLD) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v4] overload ratio ", ratio, " below scale-out threshold");
-            return new int[0];
-        }
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v4] ", "no underloaded VM had a viable consolidation host");
+        return null;
+    }
 
-        int[] mipsTiers = readSpace.getMipsTiers();
-        if (mipsTiers.length == 0) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v4] no mips tiers configured, cannot size new vm");
-            return new int[0];
-        }
-
-        int mediumTier = mipsTiers.length / 2;
-        int datacenterId = 0;
-        if (!vms.isEmpty()) {
-            Integer dc = readSpace.getDatacenterFor(readSpace.getId(vms.get(0)));
-            if (dc != null) {
-                datacenterId = dc;
+    private HostEntity findHostOf(ReadSpace readSpace, List<HostEntity> hosts, GuestEntity vm) {
+        for (HostEntity host : hosts) {
+            if (readSpace.getVmListForHost(host).contains(vm)) {
+                return host;
             }
         }
-
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v4] sustained overload detected, requesting new medium vm in datacenter ", datacenterId);
-        return new int[] { mediumTier, mediumTier, datacenterId };
+        return null;
     }
 
     @Override
     public String inputSemantic() {
-        return "vm-loadstate-classification";
+        return "vm-cpuutil-loadstate";
     }
 
     @Override
     public String outputSemantic() {
-        return "requestVmCreation";
+        return "vm-migration-worstfit-consolidation";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 2300;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 3002;
     }
 }

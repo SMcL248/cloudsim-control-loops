@@ -1,85 +1,86 @@
 package org.cloudbus.cloudsim.examples;// always include
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
+import java.util.Arrays;
 
-/**
- * Variant 2 - VM level, population z-score thresholds.
- * Boundaries are derived from the observed population every call rather than
- * fixed constants: a VM more than Z standard deviations above the current
- * population mean is overloaded, more than Z below it is underloaded.
- */
+// Strategy: adaptive z-score classifier.
+// Instead of fixed cutoffs, thresholds are derived from the observed batch
+// itself - mean and standard deviation of the current metrics array. An
+// entry is flagged only if it deviates meaningfully from its peers in this
+// tick, so the same raw utilisation value can be judged differently
+// depending on what the rest of the fleet is doing.
 public class analyser_v2 implements Analyser<double[], LoadState[]> {
+
+    private static final String MODULE_NAME = "analyser_v2";
 
     private static final int INPUT_GUID = 1300;
     private static final int OUTPUT_GUID = 2300;
-    private static final String INPUT_SEMANTIC = "vm-cpu-utilization-instantaneous-fraction-of-vm-capacity";
-    private static final String OUTPUT_SEMANTIC = "vm-load-classification-balanced-under-over";
+    private static final String INPUT_SEMANTIC = "vm-cpu-utilization-instant";
+    private static final String OUTPUT_SEMANTIC = "vm-load-zscore-classification";
 
-    private static final double Z = 1.0;
+    private static final double Z_THRESHOLD = 1.0;
+    private static final double MIN_STD_DEV = 1e-6;
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
         int n = metrics.length;
-        LoadState[] states = new LoadState[n];
+        LoadState[] result = new LoadState[n];
 
-        double mean = mean(metrics);
-        double stdDev = stdDev(metrics, mean);
+        if (n == 0) {
+            return result;
+        }
 
-        int overloaded = 0;
-        int underloaded = 0;
-        int balanced = 0;
+        double sum = 0.0;
+        int validCount = 0;
+        for (double v : metrics) {
+            if (!Double.isNaN(v)) {
+                sum += v;
+                validCount++;
+            }
+        }
+
+        if (validCount == 0) {
+            Arrays.fill(result, LoadState.BALANCED);
+            return result;
+        }
+
+        double mean = sum / validCount;
+
+        double sqDiffSum = 0.0;
+        for (double v : metrics) {
+            if (!Double.isNaN(v)) {
+                double diff = v - mean;
+                sqDiffSum += diff * diff;
+            }
+        }
+        double stdDev = Math.sqrt(sqDiffSum / validCount);
+
+        if (stdDev < MIN_STD_DEV) {
+            Arrays.fill(result, LoadState.BALANCED);
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] near-uniform distribution (stdDev~0), all BALANCED");
+            return result;
+        }
 
         for (int i = 0; i < n; i++) {
-            double util = metrics[i];
-            LoadState state;
-
-            if (stdDev <= 0.0) {
-                // No spread in the population this tick: nobody can be an
-                // outlier relative to peers who are all reading the same.
-                state = LoadState.BALANCED;
-            } else if (util > mean + Z * stdDev) {
-                state = LoadState.OVERLOADED;
-            } else if (util < mean - Z * stdDev) {
-                state = LoadState.UNDERLOADED;
-            } else {
-                state = LoadState.BALANCED;
+            double v = metrics[i];
+            if (Double.isNaN(v)) {
+                result[i] = LoadState.BALANCED;
+                continue;
             }
-
-            states[i] = state;
-            if (state == LoadState.OVERLOADED) overloaded++;
-            else if (state == LoadState.UNDERLOADED) underloaded++;
-            else balanced++;
+            double z = (v - mean) / stdDev;
+            if (z >= Z_THRESHOLD) {
+                result[i] = LoadState.OVERLOADED;
+            } else if (z <= -Z_THRESHOLD) {
+                result[i] = LoadState.UNDERLOADED;
+            } else {
+                result[i] = LoadState.BALANCED;
+            }
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [analyser_v2] z-score VM classification complete -> ",
-                n, " vms, mean=", mean, ", stdDev=", stdDev, ", overloaded=", overloaded,
-                ", underloaded=", underloaded, ", balanced=", balanced);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] classified ", n,
+                " VMs; mean=", mean, " stdDev=", stdDev, " zThreshold=", Z_THRESHOLD);
 
-        return states;
-    }
-
-    private double mean(double[] values) {
-        if (values.length == 0) {
-            return 0.0;
-        }
-        double sum = 0.0;
-        for (double v : values) {
-            sum += v;
-        }
-        return sum / values.length;
-    }
-
-    private double stdDev(double[] values, double mean) {
-        if (values.length == 0) {
-            return 0.0;
-        }
-        double sumSq = 0.0;
-        for (double v : values) {
-            double diff = v - mean;
-            sumSq += diff * diff;
-        }
-        return Math.sqrt(sumSq / values.length);
+        return result;
     }
 
     @Override

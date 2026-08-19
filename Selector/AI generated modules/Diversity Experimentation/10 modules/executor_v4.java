@@ -2,21 +2,13 @@ package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.Cloudlet;
 
-import java.util.List;
-
-// Variant angle: requestVmDestruction, guarded by resolving the VM first and
-// logging the blast radius (how many in-flight cloudlets will be destroyed
-// alongside it) before firing, since this is an explicitly destructive action.
 public class executor_v4 implements Executor<int[]> {
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        double now = actionSpace.getNow();
-
         if (actions == null || actions.length != 1) {
-            Log.printlnConcat(now, ": [executor_v4] REJECTED malformed payload, expected {vmId}");
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] rejected malformed payload, expected 1 int");
             return false;
         }
 
@@ -24,17 +16,18 @@ public class executor_v4 implements Executor<int[]> {
         GuestEntity vm = actionSpace.getVmById(vmId);
 
         if (vm == null) {
-            Log.printlnConcat(now, ": [executor_v4] REJECTED destruction, VM ", vmId, " could not be resolved");
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] rejected, unresolved vmId=", vmId);
             return false;
         }
 
-        List<Cloudlet> lostCloudlets = actionSpace.getVmCloudletList(vm);
-        int lostCount = (lostCloudlets == null) ? 0 : lostCloudlets.size();
+        try {
+            actionSpace.requestVmDestruction(vm);
+        } catch (Exception e) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] requestVmDestruction threw, vmId=", vmId);
+            return false;
+        }
 
-        Log.printlnConcat(now, ": [executor_v4] WARNING destroying VM ", vmId, " will destroy ", lostCount, " allocated cloudlet workload(s)");
-
-        actionSpace.requestVmDestruction(vm);
-        Log.printlnConcat(now, ": [executor_v4] ATTEMPTED requestVmDestruction vm=", vmId);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] attempted requestVmDestruction, vmId=", vmId);
         return true;
     }
 

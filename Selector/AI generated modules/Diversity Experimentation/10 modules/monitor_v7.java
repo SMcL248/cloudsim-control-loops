@@ -4,14 +4,16 @@ import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import java.util.List;
 
-// VM-level monitor: elastic MIPS headroom fraction.
-// For each VM, reports how much scale-up room remains before the next MIPS
-// tier, expressed as a fraction of current MIPS: (nextTier - current) /
-// current. VMs already at the top tier, or whose current value does not
-// match a known tier (both signalled by the -1 sentinel from
-// getNextMipsTier), report zero headroom. VMs mid-migration or still being
-// instantiated report the module's own -1.0 sentinel, since scaling
-// decisions during those transitions are unreliable.
+/**
+ * VM-level monitor. Checks all three scaling dimensions available to a
+ * VM (MIPS, RAM, Bandwidth tiers) and counts how many are already at
+ * their ceiling, using the -1 sentinel each getNextXTier() call returns
+ * once a dimension is maxed out. The result is the fraction of
+ * dimensions with no further vertical scaling headroom left (0.0 = able
+ * to grow in every dimension, 1.0 = no vertical scaling options remain
+ * at all). This is a capacity-growth signal, independent of how
+ * utilised the VM currently is.
+ */
 public class monitor_v7 implements Monitor<double[]> {
 
     @Override
@@ -22,31 +24,27 @@ public class monitor_v7 implements Monitor<double[]> {
         for (int i = 0; i < vms.size(); i++) {
             GuestEntity vm = vms.get(i);
 
-            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
-                result[i] = -1.0;
-                continue;
+            int maxedCount = 0;
+            if (readSpace.getNextMipsTier(vm) < 0) {
+                maxedCount++;
+            }
+            if (readSpace.getNextRamTier(vm) < 0) {
+                maxedCount++;
+            }
+            if (readSpace.getNextBwTier(vm) < 0) {
+                maxedCount++;
             }
 
-            double current = readSpace.getVmMips(vm);
-            double next = readSpace.getNextMipsTier(vm);
-
-            if (next < 0.0 || current <= 0.0) {
-                result[i] = 0.0;
-                continue;
-            }
-
-            result[i] = (next - current) / current;
+            result[i] = maxedCount / 3.0;
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v7] computed vm elastic mips headroom for ",
-                vms.size(), " vms");
-
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v7] ", "computed scale-ceiling proximity for ", vms.size(), " vms");
         return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "vm-elastic-mips-headroom-fraction-to-next-tier";
+        return "vm-scaling-headroom-ceiling-proximity-fraction";
     }
 
     @Override

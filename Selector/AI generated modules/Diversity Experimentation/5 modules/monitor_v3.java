@@ -1,63 +1,56 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
 import java.util.List;
 
-// Variant 3: VM-level CPU utilisation volatility (coefficient of variation).
-// getVmUtilizationMad() is explicitly not MIPS-scaled while
-// getVmUtilizationMean() is, so the MAD is scaled by the VM's MIPS rating
-// before the ratio is taken, giving a dimensionless volatility score.
-// A high value signals a bursty/unpredictable workload that a planner may
-// want to treat more conservatively (e.g. avoid tight-packing that VM);
-// this is a stability signal, orthogonal to raw utilisation level.
+/**
+ * VM-level monitor.
+ *
+ * Approach: temporal volatility. Reports each VM's 30-reading CPU
+ * utilisation MAD (mean absolute deviation), scaled into MIPS units via
+ * the VM's MIPS rating. This is a noise/burstiness signal rather than a
+ * load signal: a VM sitting at 40% mean utilisation that swings wildly
+ * reading-to-reading is a much riskier scaling/placement candidate than
+ * a VM steady at 40%, even though both would report the same mean.
+ */
 public class monitor_v3 implements Monitor<double[]> {
+
+    private static final String SEMANTIC = "vm-utilVolatilityMips-mad30scaled";
+    private static final int GUID = 1300;
 
     @Override
     public double[] observe(ReadSpace readSpace) {
         List<GuestEntity> vms = readSpace.getVmList();
-        double[] volatility = new double[vms.size()];
+        double[] result = new double[vms.size()];
 
+        double sum = 0.0;
         for (int i = 0; i < vms.size(); i++) {
             GuestEntity vm = vms.get(i);
 
-            double meanUtil = readSpace.getVmUtilizationMean(vm);
-            double madUtil = readSpace.getVmUtilizationMad(vm);
-            double vmMips = readSpace.getVmMips(vm);
+            double mad = readSpace.getVmUtilizationMad(vm);
+            double mips = readSpace.getVmMips(vm);
+            double volatility = mad * mips;
 
-            // madUtil is not MIPS-scaled; scale it so it shares units with
-            // meanUtil before dividing.
-            double madScaled = madUtil * vmMips;
-
-            if (meanUtil <= 0.0) {
-                volatility[i] = 0.0;
-            } else {
-                volatility[i] = madScaled / meanUtil;
-            }
+            result[i] = volatility;
+            sum += volatility;
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v3] vm cpu utilisation volatility (CV) computed for ", vms.size(), " vms (index-aligned with getVmList).");
-        return volatility;
+        double mean = vms.isEmpty() ? 0.0 : sum / vms.size();
+        String message = "vms=" + vms.size() + " meanUtilVolatilityMips=" + mean;
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v3] ", message);
+
+        return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "3-vmCpuUtilVolatilityCV-madUtilScaledByVmMips_divByUtilMeanMips_dimensionless";
+        return SEMANTIC;
     }
 
     @Override
     public int outputGuid() {
-        return 1300;
+        return GUID;
     }
-
 }

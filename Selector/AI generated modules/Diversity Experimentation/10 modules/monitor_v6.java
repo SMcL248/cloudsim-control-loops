@@ -4,16 +4,18 @@ import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import java.util.List;
 
-// VM-level monitor: CPU utilisation volatility.
-// Reports a coefficient-of-variation-like burstiness score per VM: the
-// 30-reading MAD of utilisation, scaled up to the same order of magnitude as
-// the mean by multiplying by the VM's MIPS rating (per the documented caveat
-// that the raw MAD figure is not MIPS-scaled and must not be compared to the
-// mean directly), divided by the mean utilisation itself. Higher values
-// indicate a VM whose load swings unpredictably rather than sitting steady.
+/**
+ * VM-level monitor. Computes a coefficient-of-variation style burstiness
+ * score from the rolling 30-reading utilisation mean and MAD. The MAD is
+ * not on the same scale as the raw utilisation mean, so the mean is
+ * first converted to absolute MIPS (mean fraction x VM MIPS rating)
+ * before the ratio is taken, per the documented scaling caveat. A low
+ * score means the VM's load is steady and predictable; a high score
+ * means its load swings sharply from reading to reading, which
+ * distinguishes two VMs with identical average utilisation but very
+ * different volatility.
+ */
 public class monitor_v6 implements Monitor<double[]> {
-
-    private static final double EPSILON = 1e-6;
 
     @Override
     public double[] observe(ReadSpace readSpace) {
@@ -23,28 +25,21 @@ public class monitor_v6 implements Monitor<double[]> {
         for (int i = 0; i < vms.size(); i++) {
             GuestEntity vm = vms.get(i);
 
-            double mean = readSpace.getVmUtilizationMean(vm);
+            double meanUtil = readSpace.getVmUtilizationMean(vm);
+            double vmMips = readSpace.getVmMips(vm);
+            double meanAbsolute = meanUtil * vmMips;
             double mad = readSpace.getVmUtilizationMad(vm);
-            double mips = readSpace.getVmMips(vm);
 
-            if (mean <= EPSILON) {
-                result[i] = -1.0;
-                continue;
-            }
-
-            double scaledMad = mad * mips;
-            result[i] = scaledMad / mean;
+            result[i] = meanAbsolute > 0 ? mad / meanAbsolute : 0.0;
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v6] computed vm cpu utilisation volatility for ",
-                vms.size(), " vms");
-
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v6] ", "computed utilisation burstiness for ", vms.size(), " vms");
         return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "vm-cpu-util-volatility-mad-mips-scaled-over-mean";
+        return "vm-utilization-burstiness-coefficient-of-variation";
     }
 
     @Override

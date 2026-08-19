@@ -3,52 +3,53 @@ package org.cloudbus.cloudsim.examples;// always include
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 
-// Variant angle: requestPeAllocation, guarded by resolving the VM and skipping
-// VMs currently mid-migration (allocating a PE mid-move is treated as unsafe
-// here), and tracking the boolean success signal from ActionSpace.
 public class executor_v7 implements Executor<int[]> {
 
     private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        double now = actionSpace.getNow();
-
-        if (actions == null || actions.length != 1) {
-            Log.printlnConcat(now, ": [executor_v7] REJECTED malformed payload, expected {vmId}");
+        if (actions == null || actions.length != 2) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v7] rejected malformed payload, expected 2 ints");
             return false;
         }
 
         int vmId = actions[0];
+        int tierIndex = actions[1];
+
         GuestEntity vm = actionSpace.getVmById(vmId);
+        int[] bwTiers = actionSpace.getBwTiers();
 
-        if (vm == null) {
-            Log.printlnConcat(now, ": [executor_v7] REJECTED PE allocation, VM ", vmId, " could not be resolved");
+        if (vm == null || bwTiers == null || tierIndex < 0 || tierIndex >= bwTiers.length) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v7] rejected, unresolved vmId=", vmId, " or bad tierIndex=", tierIndex);
             return false;
         }
 
-        if (actionSpace.isVmMigrating(vm)) {
-            Log.printlnConcat(now, ": [executor_v7] SKIPPED PE allocation, VM ", vmId, " is currently migrating");
+        double newBw = bwTiers[tierIndex];
+        boolean succeeded;
+        try {
+            succeeded = actionSpace.requestBwScaling(vm, newBw);
+        } catch (Exception e) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v7] requestBwScaling threw, vmId=", vmId, " newBw=", newBw);
             return false;
         }
 
-        boolean succeeded = actionSpace.requestPeAllocation(vm);
         if (succeeded) {
             successfulActionCount++;
         }
 
-        Log.printlnConcat(now, ": [executor_v7] ATTEMPTED requestPeAllocation vm=", vmId, " succeeded=", succeeded);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v7] attempted requestBwScaling, vmId=", vmId, " newBw=", newBw, " succeeded=", succeeded);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "allocate additional PE to VM";
+        return "scale VM bandwidth to tier value";
     }
 
     @Override
     public int inputGuid() {
-        return 3008;
+        return 3007;
     }
 
     @Override

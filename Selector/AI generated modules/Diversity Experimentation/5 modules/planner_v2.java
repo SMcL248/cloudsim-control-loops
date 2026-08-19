@@ -1,146 +1,63 @@
 package org.cloudbus.cloudsim.examples;// always include
 
+// Import whats needed
+import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.GuestEntity;
+import org.cloudbus.cloudsim.core.HostEntity;
 import java.util.List;
 
-import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.GuestEntity;
-
-/**
- * planner_v2
- *
- * Strategy: "Overload relief migration"
- * Host-level diagnosis. Finds the most saturated host flagged OVERLOADED
- * (lowest available MIPS headroom), picks its busiest non-migrating VM
- * (highest CPU utilisation) as the migration candidate, and searches for a
- * destination host that can accept it. Destination search first tries hosts
- * NOT flagged OVERLOADED (preferred), falling back to any host that can
- * accept the VM if no preferred host exists; within a pass, the candidate
- * with the most spare MIPS headroom wins.
- * Emits requestVmMigration{vmId, targetHostId}, or an empty array if no
- * viable source VM / destination host pair exists.
- */
+// Strategy: conservative idle-host power-down for energy conservation.
+// Deliberately narrow: only ever targets an UNDERLOADED host that is already carrying zero
+// guests, so the destructive power-down action can never strand a live VM or Cloudlet. Among
+// eligible empty hosts, picks the one currently drawing the most power for maximum savings.
 public class planner_v2 implements Planner<LoadState[], int[]> {
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-
         List<HostEntity> hosts = readSpace.getAllHosts();
-        int limit = Math.min(diagnosis.length, hosts.size());
 
-        HostEntity worstHost = findMostSaturatedOverloadedHost(readSpace, hosts, diagnosis, limit);
-        if (worstHost == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v2] ", "no overloaded host found");
-            return new int[0];
-        }
+        HostEntity bestCandidate = null;
+        double highestDrain = -1.0;
 
-        GuestEntity vmToMove = findBusiestVm(readSpace, readSpace.getVmListForHost(worstHost));
-        if (vmToMove == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v2] ", "overloaded host has no movable vm");
-            return new int[0];
-        }
-
-        // Prefer a destination host that isn't itself diagnosed OVERLOADED;
-        // fall back to any host that can accept the VM otherwise.
-        HostEntity bestTarget = findBestTarget(readSpace, hosts, diagnosis, limit, worstHost, vmToMove, true);
-        if (bestTarget == null) {
-            bestTarget = findBestTarget(readSpace, hosts, diagnosis, limit, worstHost, vmToMove, false);
-        }
-
-        if (bestTarget == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v2] ", "no viable destination host for migration");
-            return new int[0];
-        }
-
-        int vmId = readSpace.getId(vmToMove);
-        int targetHostId = readSpace.getId(bestTarget);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v2] ",
-                "migrating vm " + vmId + " off overloaded host to host " + targetHostId);
-        return new int[] { vmId, targetHostId };
-    }
-
-    private HostEntity findMostSaturatedOverloadedHost(ReadSpace readSpace, List<HostEntity> hosts,
-            LoadState[] diagnosis, int limit) {
-        HostEntity worstHost = null;
-        double lowestHeadroom = Double.MAX_VALUE;
-
-        for (int i = 0; i < limit; i++) {
-            if (diagnosis[i] != LoadState.OVERLOADED) {
-                continue;
-            }
+        // Only ever target hosts flagged UNDERLOADED that are already carrying zero guests,
+        // so powering them down cannot destroy any live VM or Cloudlet work.
+        for (int i = 0; i < diagnosis.length && i < hosts.size(); i++) {
+            if (diagnosis[i] != LoadState.UNDERLOADED) continue;
             HostEntity host = hosts.get(i);
-            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)) {
-                continue;
-            }
-            if (readSpace.isHostPoweredDown(host) || readSpace.isHostPoweringUp(host)) {
-                continue;
-            }
 
-            double headroom = readSpace.getHostAvailableMips(host);
-            if (headroom < lowestHeadroom) {
-                lowestHeadroom = headroom;
-                worstHost = host;
+            if (readSpace.isHostFailed(host)) continue;
+            if (readSpace.isHostPermanentlyDead(host)) continue;
+            if (readSpace.isHostPoweredDown(host)) continue;
+            if (readSpace.isHostPoweringUp(host)) continue;
+
+            List<GuestEntity> guests = readSpace.getVmListForHost(host);
+            if (!guests.isEmpty()) continue;
+
+            double drain = readSpace.getHostPower(host);
+            if (drain > highestDrain) {
+                highestDrain = drain;
+                bestCandidate = host;
             }
         }
-        return worstHost;
-    }
 
-    private GuestEntity findBusiestVm(ReadSpace readSpace, List<GuestEntity> candidates) {
-        GuestEntity busiest = null;
-        double highestUtil = -1.0;
-        for (GuestEntity vm : candidates) {
-            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
-                continue;
-            }
-            double util = readSpace.getVmCpuUtil(vm);
-            if (util > highestUtil) {
-                highestUtil = util;
-                busiest = vm;
-            }
+        if (bestCandidate == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v2] ", "no empty idle host available to power down");
+            return new int[0];
         }
-        return busiest;
-    }
 
-    private HostEntity findBestTarget(ReadSpace readSpace, List<HostEntity> hosts, LoadState[] diagnosis, int limit,
-            HostEntity exclude, GuestEntity vm, boolean requireNotOverloaded) {
-        HostEntity best = null;
-        double bestHeadroom = -1.0;
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v2] planning power-down of idle empty host ", readSpace.getId(bestCandidate));
 
-        for (int j = 0; j < hosts.size(); j++) {
-            HostEntity candidate = hosts.get(j);
-            if (candidate == exclude) {
-                continue;
-            }
-            if (readSpace.isHostFailed(candidate) || readSpace.isHostPermanentlyDead(candidate)) {
-                continue;
-            }
-            if (readSpace.isHostPoweredDown(candidate) || readSpace.isHostPoweringUp(candidate)) {
-                continue;
-            }
-            if (!readSpace.hostHasFreePe(candidate) || !readSpace.canMigrateGuestToHost(candidate, vm)) {
-                continue;
-            }
-            if (requireNotOverloaded && j < limit && diagnosis[j] == LoadState.OVERLOADED) {
-                continue;
-            }
-
-            double headroom = readSpace.getHostAvailableMips(candidate);
-            if (headroom > bestHeadroom) {
-                bestHeadroom = headroom;
-                best = candidate;
-            }
-        }
-        return best;
+        return new int[] { readSpace.getId(bestCandidate) };
     }
 
     @Override
     public String inputSemantic() {
-        return "host-loadstate-classification";
+        return "host-loadstate-idle-signal";
     }
 
     @Override
     public String outputSemantic() {
-        return "vm-migration";
+        return "requestHostPowerDown";
     }
 
     @Override
@@ -150,6 +67,6 @@ public class planner_v2 implements Planner<LoadState[], int[]> {
 
     @Override
     public int outputGuid() {
-        return 3002;
+        return 3010;
     }
 }

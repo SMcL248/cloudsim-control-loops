@@ -1,86 +1,97 @@
-package org.cloudbus.cloudsim.examples;
+package org.cloudbus.cloudsim.examples;// always include
 
-import java.util.Arrays;
 import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.Cloudlet;
+import java.util.Arrays;
+import java.util.List;
 
+/*
+ * Variant: analyser_v4
+ * Level: CLOUDLET
+ * Metric: completion fraction ((total - remaining) / total)
+ * Strategy: Tukey IQR fences over how far each cloudlet has progressed
+ * relative to its peers. A cloudlet with unusually little progress is
+ * treated as OVERLOADED (it is starving for cycles); one with unusually
+ * rapid progress is treated as UNDERLOADED (its host clearly has cycles to
+ * spare).
+ */
 public class analyser_v4 implements Analyser<double[], LoadState[]> {
 
-    private static final int INPUT_GUID = 1300;
-    private static final int OUTPUT_GUID = 2300;
-    private static final String INPUT_SEMANTIC = "vm-cpuUtilFraction-instantaneous";
-    private static final String OUTPUT_SEMANTIC = "vm-loadState-quartileIqr";
+    private static final double FENCE_MULTIPLIER = 1.5;
 
     @Override
     public LoadState[] analyse(double[] metrics, ReadSpace readSpace) {
-        int n = metrics.length;
-        LoadState[] result = new LoadState[n];
+        List<Cloudlet> cloudlets = readSpace.getActiveCloudlets();
+        LoadState[] states = new LoadState[metrics.length];
 
-        if (n == 0) {
-            Log.printlnConcat(readSpace.getNow(), ": [analyser_v4] no VMs to classify.");
-            return result;
-        }
-
-        double[] sorted = Arrays.copyOf(metrics, n);
+        double[] sorted = Arrays.copyOf(metrics, metrics.length);
         Arrays.sort(sorted);
-
         double q1 = percentile(sorted, 0.25);
         double q3 = percentile(sorted, 0.75);
+        double iqr = q3 - q1;
+        double lowerFence = q1 - FENCE_MULTIPLIER * iqr;
+        double upperFence = q3 + FENCE_MULTIPLIER * iqr;
 
-        int overloadedCount = 0;
-        int underloadedCount = 0;
-
-        for (int i = 0; i < n; i++) {
-            if (metrics[i] > q3) {
-                result[i] = LoadState.OVERLOADED;
-                overloadedCount++;
-            } else if (metrics[i] < q1) {
-                result[i] = LoadState.UNDERLOADED;
-                underloadedCount++;
+        int overloaded = 0, underloaded = 0, balanced = 0;
+        for (int i = 0; i < metrics.length; i++) {
+            LoadState state;
+            if (metrics[i] < lowerFence) {
+                state = LoadState.OVERLOADED;
+            } else if (metrics[i] > upperFence) {
+                state = LoadState.UNDERLOADED;
             } else {
-                result[i] = LoadState.BALANCED;
+                state = LoadState.BALANCED;
+            }
+            states[i] = state;
+            switch (state) {
+                case OVERLOADED: overloaded++; break;
+                case UNDERLOADED: underloaded++; break;
+                default: balanced++; break;
+            }
+            if (state != LoadState.BALANCED && i < cloudlets.size()) {
+                Log.printlnConcat(readSpace.getNow(), ": [analyser_v4] cloudlet ", readSpace.getId(cloudlets.get(i)), " completion=", metrics[i], " -> ", state);
             }
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [analyser_v4] classified ", n,
-                " VMs against interquartile range (q1=", q1, ", q3=", q3, "): ",
-                overloadedCount, " overloaded, ", underloadedCount, " underloaded, ",
-                (n - overloadedCount - underloadedCount), " balanced.");
-
-        return result;
+        Log.printlnConcat(readSpace.getNow(), ": [analyser_v4] IQR classification: q1=", q1, " q3=", q3, " -> ", overloaded, " overloaded, ", underloaded, " underloaded, ", balanced, " balanced");
+        return states;
     }
 
-    private double percentile(double[] sortedValues, double fraction) {
+    private double percentile(double[] sortedValues, double p) {
         int n = sortedValues.length;
+        if (n == 0) {
+            return 0.0;
+        }
         if (n == 1) {
             return sortedValues[0];
         }
-        double position = fraction * (n - 1);
-        int lowerIndex = (int) Math.floor(position);
-        int upperIndex = (int) Math.ceil(position);
-        if (lowerIndex == upperIndex) {
-            return sortedValues[lowerIndex];
+        double rank = p * (n - 1);
+        int lowIndex = (int) Math.floor(rank);
+        int highIndex = (int) Math.ceil(rank);
+        if (lowIndex == highIndex) {
+            return sortedValues[lowIndex];
         }
-        double weight = position - lowerIndex;
-        return sortedValues[lowerIndex] * (1 - weight) + sortedValues[upperIndex] * weight;
+        double fraction = rank - lowIndex;
+        return sortedValues[lowIndex] + fraction * (sortedValues[highIndex] - sortedValues[lowIndex]);
     }
 
     @Override
     public String inputSemantic() {
-        return INPUT_SEMANTIC;
+        return "cloudlet-completion-fraction";
     }
 
     @Override
     public String outputSemantic() {
-        return OUTPUT_SEMANTIC;
+        return "cloudlet-load-state-iqr";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 1400;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 2400;
     }
 }

@@ -1,92 +1,105 @@
 package org.cloudbus.cloudsim.examples;// always include
 
-import java.util.List;
-
+// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
+import java.util.List;
 
-/**
- * planner_v3
- *
- * Strategy: "Vertical scale-up for the worst offender"
- * VM-level diagnosis. Among VMs flagged OVERLOADED (and not already
- * mid-migration or mid-instantiation), selects the one with the highest CPU
- * utilisation whose next MIPS tier is actually available (getNextMipsTier
- * != -1 sentinel, and that value matches a known tier index), and requests
- * a scale to that tier.
- * Emits requestMipsScaling{vmId, tierIndex}, or an empty array if no VM
- * qualifies.
- */
+// Strategy: vertical elastic MIPS scaling at the VM level.
+// Overload is always addressed before underload: an under-provisioned VM risks Cloudlet
+// completion failures, while an over-provisioned VM only risks wasted energy. Among VMs
+// sharing a state, breaks ties using live CPU utilisation (worst offender / most idle).
 public class planner_v3 implements Planner<LoadState[], int[]> {
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-
         List<GuestEntity> vms = readSpace.getVmList();
-        int limit = Math.min(diagnosis.length, vms.size());
         int[] mipsTiers = readSpace.getMipsTiers();
 
-        GuestEntity worstVm = null;
-        int worstTierIndex = -1;
-        double worstUtil = -1.0;
+        GuestEntity target = null;
+        boolean scaleUp = true;
+        double extremeUtil = -1.0;
 
-        for (int i = 0; i < limit; i++) {
-            if (diagnosis[i] != LoadState.OVERLOADED) {
-                continue;
-            }
+        // Overload takes priority: an under-provisioned VM risks Cloudlet completion failures,
+        // an over-provisioned VM only risks wasted capacity.
+        for (int i = 0; i < diagnosis.length && i < vms.size(); i++) {
+            if (diagnosis[i] != LoadState.OVERLOADED) continue;
             GuestEntity vm = vms.get(i);
-            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
-                continue;
-            }
-
-            double nextTier = readSpace.getNextMipsTier(vm);
-            if (nextTier < 0) {
-                // Already maxed out, or current MIPS doesn't match a known tier.
-                continue;
-            }
-
-            int tierIndex = indexOfTier(mipsTiers, nextTier);
-            if (tierIndex < 0) {
-                continue;
-            }
-
+            if (readSpace.isVmBeingInstantiated(vm) || readSpace.isVmMigrating(vm)) continue;
             double util = readSpace.getVmCpuUtil(vm);
-            if (util > worstUtil) {
-                worstUtil = util;
-                worstVm = vm;
-                worstTierIndex = tierIndex;
+            if (util > extremeUtil) {
+                extremeUtil = util;
+                target = vm;
+                scaleUp = true;
             }
         }
 
-        if (worstVm == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v3] ", "no scalable overloaded vm found");
+        if (target == null) {
+            extremeUtil = Double.MAX_VALUE;
+            for (int i = 0; i < diagnosis.length && i < vms.size(); i++) {
+                if (diagnosis[i] != LoadState.UNDERLOADED) continue;
+                GuestEntity vm = vms.get(i);
+                if (readSpace.isVmBeingInstantiated(vm) || readSpace.isVmMigrating(vm)) continue;
+                double util = readSpace.getVmCpuUtil(vm);
+                if (util < extremeUtil) {
+                    extremeUtil = util;
+                    target = vm;
+                    scaleUp = false;
+                }
+            }
+        }
+
+        if (target == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v3] ", "no vm requires mips rescaling");
             return new int[0];
         }
 
-        int vmId = readSpace.getId(worstVm);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v3] ",
-                "scaling up vm " + vmId + " to mips tier index " + worstTierIndex);
-        return new int[] { vmId, worstTierIndex };
-    }
+        int tierIndex = -1;
 
-    private int indexOfTier(int[] tiers, double value) {
-        int rounded = (int) Math.round(value);
-        for (int i = 0; i < tiers.length; i++) {
-            if (tiers[i] == rounded) {
-                return i;
+        if (scaleUp) {
+            double nextTier = readSpace.getNextMipsTier(target);
+            if (nextTier < 0) {
+                Log.printlnConcat(readSpace.getNow(), ": [planner_v3] ", "overloaded vm already at max mips tier, no action");
+                return new int[0];
+            }
+            for (int t = 0; t < mipsTiers.length; t++) {
+                if (mipsTiers[t] == (int) nextTier) {
+                    tierIndex = t;
+                    break;
+                }
+            }
+        } else {
+            double currentMips = readSpace.getVmMips(target);
+            int currentIdx = -1;
+            for (int t = 0; t < mipsTiers.length; t++) {
+                if (mipsTiers[t] == (int) currentMips) {
+                    currentIdx = t;
+                    break;
+                }
+            }
+            if (currentIdx > 0) {
+                tierIndex = currentIdx - 1;
             }
         }
-        return -1;
+
+        if (tierIndex < 0) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v3] ", "could not resolve a valid target mips tier, no action");
+            return new int[0];
+        }
+
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v3] planning mips rescale of vm ", readSpace.getId(target), " to tier index ", tierIndex);
+
+        return new int[] { readSpace.getId(target), tierIndex };
     }
 
     @Override
     public String inputSemantic() {
-        return "vm-loadstate-classification";
+        return "vm-loadstate-elastic-signal";
     }
 
     @Override
     public String outputSemantic() {
-        return "vm-mips-scale-up";
+        return "requestMipsScaling";
     }
 
     @Override

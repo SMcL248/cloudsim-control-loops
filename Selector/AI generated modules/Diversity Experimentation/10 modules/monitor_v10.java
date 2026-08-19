@@ -3,59 +3,58 @@ package org.cloudbus.cloudsim.examples;
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashMap;
 
-// Cloudlet-level monitor: PE share of hosting VM.
-// For each active cloudlet, reports the fraction of its hosting VM's PE
-// count that the cloudlet itself requests: cloudletPes / vmPes. This
-// surfaces how resource-intensive a single cloudlet is relative to the VM
-// it runs on, independent of that VM's absolute size. Uses the same
-// cloudlet-id -> VM lookup approach as monitor_v9, since ownership is not
-// otherwise obtainable from a bare Cloudlet reference.
+/**
+ * Cloudlet-level monitor. Looks up each active cloudlet's owning VM by
+ * scanning every VM's own cloudlet list once (ReadSpace has no direct
+ * cloudlet-to-VM accessor), then asks the simulation for that
+ * cloudlet's estimated finish time. The result is the slack between
+ * that estimate and the current simulation clock: an absolute
+ * time-to-completion projection, rather than a progress ratio or a
+ * resource-weighted priority score.
+ * Sentinel: -1.0 means the owning VM for the cloudlet could not be
+ * resolved.
+ */
 public class monitor_v10 implements Monitor<double[]> {
 
     @Override
     public double[] observe(ReadSpace readSpace) {
-        List<Cloudlet> cloudlets = readSpace.getActiveCloudlets();
-        double[] result = new double[cloudlets.size()];
-
-        Map<Integer, GuestEntity> cloudletOwner = new HashMap<Integer, GuestEntity>();
+        Map<Integer, GuestEntity> owner = new HashMap<Integer, GuestEntity>();
         for (GuestEntity vm : readSpace.getVmList()) {
-            for (Cloudlet cl : readSpace.getVmCloudletList(vm)) {
-                cloudletOwner.put(readSpace.getId(cl), vm);
+            List<Cloudlet> owned = readSpace.getVmCloudletList(vm);
+            if (owned == null) {
+                continue;
+            }
+            for (Cloudlet cl : owned) {
+                owner.put(readSpace.getId(cl), vm);
             }
         }
 
-        for (int i = 0; i < cloudlets.size(); i++) {
-            Cloudlet cl = cloudlets.get(i);
-            GuestEntity owner = cloudletOwner.get(readSpace.getId(cl));
+        List<Cloudlet> active = readSpace.getActiveCloudlets();
+        double[] result = new double[active.size()];
 
-            if (owner == null) {
+        for (int i = 0; i < active.size(); i++) {
+            Cloudlet cl = active.get(i);
+            GuestEntity vm = owner.get(readSpace.getId(cl));
+
+            if (vm == null) {
                 result[i] = -1.0;
-                continue;
+            } else {
+                double finishTime = readSpace.getCloudletEstimatedFinishTime(vm, cl);
+                result[i] = finishTime - readSpace.getNow();
             }
-
-            int vmPes = readSpace.getVmNumberOfPes(owner);
-            if (vmPes <= 0) {
-                result[i] = -1.0;
-                continue;
-            }
-
-            int clPes = readSpace.getCloudletNumberOfPes(cl);
-            result[i] = (double) clPes / (double) vmPes;
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v10] computed cloudlet pe share of hosting vm for ",
-                cloudlets.size(), " cloudlets");
-
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v10] ", "computed finish-time slack for ", active.size(), " cloudlets");
         return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "cloudlet-pe-share-of-hosting-vm-pe-count";
+        return "cloudlet-estimated-finish-time-slack-from-now";
     }
 
     @Override

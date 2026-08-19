@@ -1,73 +1,71 @@
 package org.cloudbus.cloudsim.examples;
 
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
 import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
+import org.cloudbus.cloudsim.core.GuestEntity;
 import java.util.List;
 
-// Elastic Core Allocation Planner.
-// Among all VMs flagged OVERLOADED in the VM-level LoadState[], selects the
-// one with the highest rolling-mean CPU utilisation and grants it an extra
-// PE, targeting the most consistently saturated VM rather than simply the
-// first one encountered.
+// Strategy: Parallelism-widening core elasticity.
+// Distinguishes VMs that are overloaded because their workload is wide (many
+// small, independently schedulable cloudlets queued) from VMs that are overloaded
+// because individual cloudlets are simply long-running. Only the former benefits
+// from an additional PE, since more cores let more queued cloudlets run
+// concurrently; a VM with few but heavy cloudlets is left for a raw-speed remedy
+// implemented elsewhere in the module set.
 public class planner_v8 implements Planner<LoadState[], int[]> {
 
-    private static final int INPUT_GUID = 2300;
-    private static final int OUTPUT_GUID = 3008;
+    private static final int BACKLOG_MULTIPLE = 2;
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-        List<GuestEntity> vms = readSpace.getVmList();
-        int limit = Math.min(diagnosis.length, vms.size());
 
-        GuestEntity candidate = null;
-        double highestUtil = -1.0;
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v8] ", "checking overloaded VMs for wide parallel backlog");
+
+        List<GuestEntity> vms = readSpace.getVmList();
+
+        int limit = Math.min(diagnosis.length, vms.size());
         for (int i = 0; i < limit; i++) {
+
             if (diagnosis[i] != LoadState.OVERLOADED) {
                 continue;
             }
+
             GuestEntity vm = vms.get(i);
-            double util = readSpace.getVmUtilizationMean(vm);
-            if (util > highestUtil) {
-                highestUtil = util;
-                candidate = vm;
+
+            List<Cloudlet> queued = readSpace.getVmCloudletList(vm);
+            int peCount = readSpace.getVmNumberOfPes(vm);
+
+            boolean wideBacklog = queued.size() >= peCount * BACKLOG_MULTIPLE;
+            if (!wideBacklog) {
+                continue;
             }
+
+            int vmId = readSpace.getId(vm);
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v8] ", "wide backlog detected, allocating PE for vmId=" + vmId);
+            return new int[] { vmId };
         }
 
-        if (candidate == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v8] no overloaded vm found for pe allocation");
-            return new int[0];
-        }
-
-        int vmId = readSpace.getId(candidate);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v8] allocating additional pe to highest-utilisation vm ", vmId);
-        return new int[] { vmId };
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v8] ", "no VM showed a wide enough backlog to justify a new PE");
+        return null;
     }
 
     @Override
     public String inputSemantic() {
-        return "vm-loadstate-classification";
+        return "vm-cpuutil-loadstate";
     }
 
     @Override
     public String outputSemantic() {
-        return "requestPeAllocation";
+        return "vm-pe-allocate-backlog";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 2300;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 3008;
     }
 }

@@ -2,111 +2,89 @@ package org.cloudbus.cloudsim.examples;
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 import java.util.List;
 
-// Straggler Cloudlet Rebalancing Planner.
-// Reads a cloudlet-level LoadState[] (index i corresponds to
-// readSpace.getActiveCloudlets().get(i)) and finds the first cloudlet
-// flagged OVERLOADED, i.e. lagging relative to its host VM. Resolves the
-// cloudlet's current VM by scanning per-VM cloudlet lists, then moves the
-// cloudlet to whichever other VM currently has the lowest CPU utilisation.
+// Strategy: Population-level fleet expansion.
+// Unlike the other planners in this set, this one never inspects a single host,
+// VM or cloudlet in isolation. It looks at the OVERLOADED proportion across the
+// entire host-level diagnosis array and treats that aggregate ratio as a single
+// system-wide signal: if a majority of hosts are overloaded, existing capacity is
+// judged structurally insufficient and a new VM is requested rather than shuffling
+// load among already-strained hosts. The severity of the ratio scales which
+// compute tier is requested.
 public class planner_v10 implements Planner<LoadState[], int[]> {
 
-    private static final int INPUT_GUID = 2400;
-    private static final int OUTPUT_GUID = 3001;
+    private static final double MAJORITY_THRESHOLD = 0.5;
+    private static final double SEVERE_THRESHOLD = 0.8;
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-        List<Cloudlet> cloudlets = readSpace.getActiveCloudlets();
-        int limit = Math.min(diagnosis.length, cloudlets.size());
 
-        Cloudlet straggler = null;
-        for (int i = 0; i < limit; i++) {
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v10] ", "assessing aggregate host overload ratio");
+
+        if (diagnosis.length == 0) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v10] ", "empty diagnosis, no fleet decision made");
+            return null;
+        }
+
+        int overloadedCount = 0;
+        for (int i = 0; i < diagnosis.length; i++) {
             if (diagnosis[i] == LoadState.OVERLOADED) {
-                straggler = cloudlets.get(i);
-                break;
+                overloadedCount++;
             }
         }
 
-        if (straggler == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v10] no overloaded cloudlet found, no rebalancing needed");
-            return new int[0];
+        double ratio = ((double) overloadedCount) / diagnosis.length;
+
+        if (ratio <= MAJORITY_THRESHOLD) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v10] ", "overload ratio below majority threshold, no expansion");
+            return null;
         }
 
-        int cloudletId = readSpace.getId(straggler);
-        List<GuestEntity> vms = readSpace.getVmList();
-
-        GuestEntity sourceVm = null;
-        for (GuestEntity vm : vms) {
-            List<Cloudlet> assigned = readSpace.getVmCloudletList(vm);
-            for (Cloudlet cl : assigned) {
-                if (readSpace.getId(cl) == cloudletId) {
-                    sourceVm = vm;
-                    break;
-                }
-            }
-            if (sourceVm != null) {
-                break;
-            }
+        List<GuestEntity> existingVms = readSpace.getVmList();
+        if (existingVms.isEmpty()) {
+            Log.printlnConcat(readSpace.getNow(), ": [planner_v10] ", "no existing VM to resolve target datacenter from");
+            return null;
         }
 
-        if (sourceVm == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v10] could not resolve source vm for cloudlet ", cloudletId);
-            return new int[0];
+        GuestEntity referenceVm = existingVms.get(0);
+        int datacenterId = readSpace.getDatacenterFor(readSpace.getId(referenceVm));
+
+        int[] mipsTiers = readSpace.getMipsTiers();
+        int severityIndex;
+        if (ratio >= SEVERE_THRESHOLD) {
+            severityIndex = mipsTiers.length - 1;
+        } else {
+            severityIndex = mipsTiers.length / 2;
         }
 
-        GuestEntity destVm = null;
-        double lowestUtil = Double.MAX_VALUE;
-        for (GuestEntity vm : vms) {
-            if (readSpace.getId(vm) == readSpace.getId(sourceVm)) {
-                continue;
-            }
-            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
-                continue;
-            }
-            double util = readSpace.getVmCpuUtil(vm);
-            if (util < lowestUtil) {
-                lowestUtil = util;
-                destVm = vm;
-            }
-        }
+        // No dedicated storage-size-tier accessor is exposed on ReadSpace, so the
+        // same severity-mapped index is reused as a coarse proxy for VM size class.
+        int tierIndex = severityIndex;
+        int sizeTierIndex = severityIndex;
 
-        if (destVm == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v10] no destination vm available for straggler cloudlet ", cloudletId);
-            return new int[0];
-        }
+        Log.printlnConcat(readSpace.getNow(), ": [planner_v10] ", "majority overload ratio=" + ratio + " requesting new VM tierIndex=" + tierIndex);
 
-        int fromVmId = readSpace.getId(sourceVm);
-        int toVmId = readSpace.getId(destVm);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v10] moving straggler cloudlet ", cloudletId, " from vm ", fromVmId, " to vm ", toVmId);
-        return new int[] { cloudletId, fromVmId, toVmId };
+        return new int[] { tierIndex, sizeTierIndex, datacenterId };
     }
 
     @Override
     public String inputSemantic() {
-        return "cloudlet-loadstate-classification";
+        return "host-aggregateutil-loadstate";
     }
 
     @Override
     public String outputSemantic() {
-        return "moveCloudlet";
+        return "vm-creation-fleet-expansion";
     }
 
     @Override
     public int inputGuid() {
-        return INPUT_GUID;
+        return 2200;
     }
 
     @Override
     public int outputGuid() {
-        return OUTPUT_GUID;
+        return 3003;
     }
 }

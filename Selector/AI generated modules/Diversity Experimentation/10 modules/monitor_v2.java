@@ -4,10 +4,18 @@ import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.HostEntity;
 import java.util.List;
 
-// Host-level monitor: power draw ratio.
-// For each host, reports current power consumption as a fraction of that
-// host's maximum possible power draw. A powered-down host explicitly reports
-// zero, since it is confirmed to draw no power.
+/**
+ * Host-level monitor. Encodes each host's operational state as a small
+ * ordinal scale rather than a continuous resource reading:
+ *   -1 = powered down (intentionally off, no risk)
+ *    0 = healthy and running normally
+ *    1 = powering up (transient power-spike window)
+ *    2 = failed but potentially recoverable (workload paused)
+ *    3 = permanently dead (unrecoverable, evacuation risk)
+ * This gives downstream modules a cheap, discrete read of host lifecycle
+ * state without having to re-derive it from several boolean flags each
+ * time.
+ */
 public class monitor_v2 implements Monitor<double[]> {
 
     @Override
@@ -18,30 +26,26 @@ public class monitor_v2 implements Monitor<double[]> {
         for (int i = 0; i < hosts.size(); i++) {
             HostEntity host = hosts.get(i);
 
-            if (readSpace.isHostPoweredDown(host)) {
-                result[i] = 0.0;
-                continue;
-            }
-
-            double maxPower = readSpace.getHostMaxPower(host);
-            if (maxPower <= 0.0) {
+            if (readSpace.isHostPermanentlyDead(host)) {
+                result[i] = 3.0;
+            } else if (readSpace.isHostFailed(host)) {
+                result[i] = 2.0;
+            } else if (readSpace.isHostPoweringUp(host)) {
+                result[i] = 1.0;
+            } else if (readSpace.isHostPoweredDown(host)) {
                 result[i] = -1.0;
-                continue;
+            } else {
+                result[i] = 0.0;
             }
-
-            double power = readSpace.getHostPower(host);
-            result[i] = power / maxPower;
         }
 
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v2] computed host power draw ratio for ",
-                hosts.size(), " hosts");
-
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v2] ", "encoded health state for ", hosts.size(), " hosts");
         return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "host-power-draw-ratio-current-over-max-power";
+        return "host-operational-health-state-ordinal-encoding";
     }
 
     @Override
