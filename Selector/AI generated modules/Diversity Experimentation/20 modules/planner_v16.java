@@ -1,73 +1,93 @@
 package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.core.GuestEntity;
+import org.cloudbus.cloudsim.core.HostEntity;
+import org.cloudbus.cloudsim.core.PowerGuestEntity;
+import org.cloudbus.cloudsim.core.PowerHostEntity;
+import org.cloudbus.cloudsim.Cloudlet;
+import org.cloudbus.cloudsim.Pe;
+import org.cloudbus.cloudsim.power.PowerDatacenter;
+import org.cloudbus.cloudsim.power.PowerHost;
+import org.cloudbus.cloudsim.power.PowerVm;
+
 import java.util.List;
 
+/**
+ * Strategy: cloudlet-granularity consolidation.
+ * Among cloudlets flagged UNDERLOADED (their VM has spare capacity to
+ * give away), picks one and packs it onto the busiest VM in the fleet
+ * that still has headroom below full utilisation - tight-packing
+ * workloads onto fewer, fuller VMs so that emptied VMs become
+ * consolidation or power-down candidates elsewhere in the loop.
+ */
 public class planner_v16 implements Planner<LoadState[], int[]> {
+
+    private static final String MODULE_NAME = "planner_v16";
+    private static final double HEADROOM_CEILING = 0.95;
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-        List<Cloudlet> activeCloudlets = readSpace.getActiveCloudlets();
-        int limit = Math.min(diagnosis.length, activeCloudlets.size());
+        List<Cloudlet> cloudlets = readSpace.getActiveCloudlets();
 
-        Cloudlet worstCloudlet = null;
-        GuestEntity worstFromVm = null;
-        double worstFinishTime = -1;
-
+        Cloudlet flagged = null;
+        GuestEntity owner = null;
+        int limit = Math.min(diagnosis.length, cloudlets.size());
         for (int i = 0; i < limit; i++) {
-            if (diagnosis[i] != LoadState.OVERLOADED) {
+            if (diagnosis[i] != LoadState.UNDERLOADED) {
                 continue;
             }
-            Cloudlet cloudlet = activeCloudlets.get(i);
-            GuestEntity fromVm = findOwningVm(cloudlet, readSpace);
-            if (fromVm == null) {
+            Cloudlet cl = cloudlets.get(i);
+            GuestEntity candidateOwner = findOwningVm(cl, readSpace);
+            if (candidateOwner == null) {
                 continue;
             }
-            double estimatedFinish = readSpace.getCloudletEstimatedFinishTime(fromVm, cloudlet);
-            if (estimatedFinish > worstFinishTime) {
-                worstFinishTime = estimatedFinish;
-                worstCloudlet = cloudlet;
-                worstFromVm = fromVm;
-            }
+            flagged = cl;
+            owner = candidateOwner;
+            break;
         }
 
-        if (worstCloudlet == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v16] no overloaded cloudlet with resolvable owner VM found");
+        if (flagged == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] no underloaded cloudlet with a resolvable owning vm found");
             return new int[0];
         }
 
-        GuestEntity bestTargetVm = null;
-        double bestFinishTime = Double.MAX_VALUE;
+        GuestEntity target = null;
+        double highestUtilBelowCeiling = -1.0;
         for (GuestEntity vm : readSpace.getVmList()) {
-            if (vm == worstFromVm || readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
+            if (readSpace.getId(vm) == readSpace.getId(owner)) {
                 continue;
             }
-            double projectedFinish = readSpace.getCloudletEstimatedFinishTime(vm, worstCloudlet);
-            if (projectedFinish < bestFinishTime) {
-                bestFinishTime = projectedFinish;
-                bestTargetVm = vm;
+            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
+                continue;
+            }
+            double util = readSpace.getVmCpuUtil(vm);
+            if (util >= HEADROOM_CEILING) {
+                continue;
+            }
+            if (util > highestUtilBelowCeiling) {
+                highestUtilBelowCeiling = util;
+                target = vm;
             }
         }
 
-        if (bestTargetVm == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v16] no candidate target VM found for at-risk cloudlet");
+        if (target == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] no consolidation target vm with headroom found for cloudlet " + readSpace.getId(flagged));
             return new int[0];
         }
 
-        int cloudletId = readSpace.getId(worstCloudlet);
-        int fromVmId = readSpace.getId(worstFromVm);
-        int toVmId = readSpace.getId(bestTargetVm);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v16] moving at-risk cloudlet ", cloudletId, " (est. finish=", worstFinishTime, ") from VM ", fromVmId, " to VM ", toVmId, " (projected finish=", bestFinishTime, ")");
-        return new int[] { cloudletId, fromVmId, toVmId };
+        int cloudletId = readSpace.getId(flagged);
+        int fromVmId = readSpace.getId(owner);
+        int toVmId = readSpace.getId(target);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] consolidating cloudlet " + cloudletId + " from vm " + fromVmId + " onto tightly-packed vm " + toVmId);
+        return new int[]{cloudletId, fromVmId, toVmId};
     }
 
-    private GuestEntity findOwningVm(Cloudlet cloudlet, ReadSpace readSpace) {
-        int cloudletId = readSpace.getId(cloudlet);
+    private GuestEntity findOwningVm(Cloudlet cl, ReadSpace readSpace) {
         for (GuestEntity vm : readSpace.getVmList()) {
-            for (Cloudlet cl : readSpace.getVmCloudletList(vm)) {
-                if (readSpace.getId(cl) == cloudletId) {
+            List<Cloudlet> assigned = readSpace.getVmCloudletList(vm);
+            for (Cloudlet c : assigned) {
+                if (readSpace.getId(c) == readSpace.getId(cl)) {
                     return vm;
                 }
             }
@@ -77,12 +97,12 @@ public class planner_v16 implements Planner<LoadState[], int[]> {
 
     @Override
     public String inputSemantic() {
-        return "cloudlet-loadstate-progress-risk";
+        return "cloudlet-host-vm-load-spare-capacity";
     }
 
     @Override
     public String outputSemantic() {
-        return "cloudlet-move";
+        return "consolidate-cloudlet-tight-pack";
     }
 
     @Override

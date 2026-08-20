@@ -1,56 +1,45 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
 import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
+import java.util.List;
 
-
-// Strategy: Migration-Aware Destruction. Withholds destruction while the vm is
-// mid-migration, to avoid destructive interference with an in-flight migration,
-// otherwise proceeds exactly as the direct variant would.
+// Impact-Assessment / Audit-first Executor for requestVmDestruction (3004).
+// Before destroying, tallies the workload that will be lost and writes it
+// to the log for traceability, then proceeds with the destruction as
+// instructed since the decision itself was already made upstream.
 public class executor_v7 implements Executor<int[]> {
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v7";
-
-        if (actions == null || actions.length != 1) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 1 int, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 1) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v7] ", "Malformed payload, expected {vmId}");
             return false;
         }
 
         int vmId = actions[0];
         GuestEntity vm = actionSpace.getVmById(vmId);
-
         if (vm == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve vm ", vmId);
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v7] ", "Nothing to destroy, unknown vm=" + vmId);
             return false;
         }
 
-        if (actionSpace.isVmMigrating(vm)) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] withheld destruction of vm ", vmId,
-                    " because it is currently mid-migration");
-            return false;
+        List<Cloudlet> workload = actionSpace.getVmCloudletList(vm);
+        long remainingWork = 0L;
+        for (Cloudlet cl : workload) {
+            remainingWork += actionSpace.getRemainingLength(cl);
         }
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v7] ", "Destroying vm=" + vmId + " will drop " + workload.size() + " cloudlets, remainingWork=" + remainingWork + " MI");
 
         actionSpace.requestVmDestruction(vm);
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted destruction of vm ", vmId,
-                " after confirming it is not mid-migration");
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v7] ", "Destroyed vm=" + vmId);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "destroy vm, withheld while vm is mid-migration";
+        return "requestVmDestruction: destroy a VM and its workload";
     }
 
     @Override

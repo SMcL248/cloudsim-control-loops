@@ -2,45 +2,38 @@ package org.cloudbus.cloudsim.examples;
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
+
 import java.util.List;
 
+// VM level - smoothed rolling-average utilization per VM.
 public class monitor_v8 implements Monitor<double[]> {
+
+    private static final int OUTPUT_GUID = 1300;
 
     @Override
     public double[] observe(ReadSpace readSpace) {
-        List<HostEntity> hosts = readSpace.getAllHosts();
-        double[] result = new double[hosts.size()];
-        for (int i = 0; i < hosts.size(); i++) {
-            HostEntity host = hosts.get(i);
-            double sum = 0.0;
-            List<GuestEntity> vms = readSpace.getVmListForHost(host);
-            for (GuestEntity vm : vms) {
-                List<Cloudlet> cloudlets = readSpace.getVmCloudletList(vm);
-                for (Cloudlet cl : cloudlets) {
-                    sum += readSpace.getRemainingLength(cl);
-                }
-            }
-            result[i] = sum;
+        List<GuestEntity> vms = readSpace.getVmList();
+        double[] result = new double[vms.size()];
+
+        for (int i = 0; i < vms.size(); i++) {
+            GuestEntity vm = vms.get(i);
+            result[i] = readSpace.getVmUtilizationMean(vm);
         }
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v8] aggregated outstanding work for ", hosts.size(), " hosts");
+
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v8] computed vm-utilization-mean-rolling30 for ", vms.size(), " vms.");
+
         return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "host-aggregate-outstanding-work-mi";
+        return "vm-utilization-mean-rolling30: 30-reading rolling average of this VM's CPU utilization fraction, "
+                + "sourced directly from ReadSpace's smoothed utilization tracker (getVmUtilizationMean). Index i "
+                + "corresponds to getVmList().get(i).";
     }
 
     @Override
     public int outputGuid() {
-        return 1200;
+        return OUTPUT_GUID;
     }
 }

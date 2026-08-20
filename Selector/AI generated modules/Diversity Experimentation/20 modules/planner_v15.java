@@ -3,95 +3,115 @@ package org.cloudbus.cloudsim.examples;// always include
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
+import org.cloudbus.cloudsim.core.PowerGuestEntity;
+import org.cloudbus.cloudsim.core.PowerHostEntity;
+import org.cloudbus.cloudsim.Cloudlet;
+import org.cloudbus.cloudsim.Pe;
+import org.cloudbus.cloudsim.power.PowerDatacenter;
+import org.cloudbus.cloudsim.power.PowerHost;
+import org.cloudbus.cloudsim.power.PowerVm;
+
 import java.util.List;
 
+/**
+ * Strategy: estimated-finish-time optimisation.
+ * Among cloudlets flagged OVERLOADED, finds the one with the worst
+ * estimated finish time on its current VM, then evaluates every other VM
+ * in the fleet to find the one that would genuinely minimise that
+ * cloudlet's estimated finish time - only moving it if a strict
+ * improvement exists.
+ */
 public class planner_v15 implements Planner<LoadState[], int[]> {
+
+    private static final String MODULE_NAME = "planner_v15";
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-        List<HostEntity> hosts = readSpace.getAllHosts();
-        int limit = Math.min(diagnosis.length, hosts.size());
+        List<Cloudlet> cloudlets = readSpace.getActiveCloudlets();
 
-        HostEntity sourceHost = null;
+        Cloudlet worstCloudlet = null;
+        GuestEntity owner = null;
+        double worstFinish = -1.0;
+        int limit = Math.min(diagnosis.length, cloudlets.size());
         for (int i = 0; i < limit; i++) {
-            if (diagnosis[i] != LoadState.UNDERLOADED) {
+            if (diagnosis[i] != LoadState.OVERLOADED) {
                 continue;
             }
-            HostEntity host = hosts.get(i);
-            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host) || readSpace.isHostPoweredDown(host)) {
+            Cloudlet cl = cloudlets.get(i);
+            GuestEntity candidateOwner = findOwningVm(cl, readSpace);
+            if (candidateOwner == null) {
                 continue;
             }
-            if (!readSpace.getVmListForHost(host).isEmpty()) {
-                sourceHost = host;
-                break;
+            double finish = readSpace.getCloudletEstimatedFinishTime(candidateOwner, cl);
+            if (finish > worstFinish) {
+                worstFinish = finish;
+                worstCloudlet = cl;
+                owner = candidateOwner;
             }
         }
 
-        if (sourceHost == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v15] no underloaded, occupied host found for evacuation");
+        if (worstCloudlet == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] no overloaded cloudlet with resolvable owner found");
             return new int[0];
         }
 
-        List<GuestEntity> hosted = readSpace.getVmListForHost(sourceHost);
-        GuestEntity vmToMove = null;
-        for (GuestEntity vm : hosted) {
-            if (!readSpace.isVmMigrating(vm) && !readSpace.isVmBeingInstantiated(vm)) {
-                vmToMove = vm;
-                break;
+        GuestEntity bestVm = null;
+        double bestFinish = worstFinish;
+        for (GuestEntity vm : readSpace.getVmList()) {
+            if (readSpace.getId(vm) == readSpace.getId(owner)) {
+                continue;
+            }
+            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
+                continue;
+            }
+            double candidateFinish = readSpace.getCloudletEstimatedFinishTime(vm, worstCloudlet);
+            if (candidateFinish < bestFinish) {
+                bestFinish = candidateFinish;
+                bestVm = vm;
             }
         }
 
-        if (vmToMove == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v15] host ", readSpace.getId(sourceHost), " has no movable VM right now");
+        if (bestVm == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] no vm improves estimated finish time for cloudlet " + readSpace.getId(worstCloudlet));
             return new int[0];
         }
 
-        // Best-fit target: smallest available-MIPS host that can still take the VM,
-        // to pack load densely and free whole hosts for later power-down.
-        HostEntity bestFitTarget = null;
-        double tightestHeadroom = Double.MAX_VALUE;
-        for (HostEntity host : hosts) {
-            if (host == sourceHost || readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host) || readSpace.isHostPoweredDown(host)) {
-                continue;
-            }
-            if (!readSpace.canMigrateGuestToHost(host, vmToMove)) {
-                continue;
-            }
-            double headroom = readSpace.getHostAvailableMips(host);
-            if (headroom < tightestHeadroom) {
-                tightestHeadroom = headroom;
-                bestFitTarget = host;
+        int cloudletId = readSpace.getId(worstCloudlet);
+        int fromVmId = readSpace.getId(owner);
+        int toVmId = readSpace.getId(bestVm);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] moving cloudlet " + cloudletId + " from vm " + fromVmId + " to vm " + toVmId + " for better finish time");
+        return new int[]{cloudletId, fromVmId, toVmId};
+    }
+
+    private GuestEntity findOwningVm(Cloudlet cl, ReadSpace readSpace) {
+        for (GuestEntity vm : readSpace.getVmList()) {
+            List<Cloudlet> assigned = readSpace.getVmCloudletList(vm);
+            for (Cloudlet c : assigned) {
+                if (readSpace.getId(c) == readSpace.getId(cl)) {
+                    return vm;
+                }
             }
         }
-
-        if (bestFitTarget == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v15] no best-fit target host found for VM ", readSpace.getId(vmToMove));
-            return new int[0];
-        }
-
-        int vmId = readSpace.getId(vmToMove);
-        int targetHostId = readSpace.getId(bestFitTarget);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v15] consolidating VM ", vmId, " onto best-fit host ", targetHostId, " to vacate source host");
-        return new int[] { vmId, targetHostId };
+        return null;
     }
 
     @Override
     public String inputSemantic() {
-        return "host-loadstate-underload-source";
+        return "cloudlet-estimated-finish-time-risk";
     }
 
     @Override
     public String outputSemantic() {
-        return "vm-migration";
+        return "move-cloudlet-deadline-optimal";
     }
 
     @Override
     public int inputGuid() {
-        return 2200;
+        return 2400;
     }
 
     @Override
     public int outputGuid() {
-        return 3002;
+        return 3001;
     }
 }

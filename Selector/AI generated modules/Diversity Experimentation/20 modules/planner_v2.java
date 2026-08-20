@@ -1,48 +1,71 @@
 package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
+import org.cloudbus.cloudsim.core.PowerGuestEntity;
+import org.cloudbus.cloudsim.core.PowerHostEntity;
+import org.cloudbus.cloudsim.Cloudlet;
+import org.cloudbus.cloudsim.Pe;
+import org.cloudbus.cloudsim.power.PowerDatacenter;
+import org.cloudbus.cloudsim.power.PowerHost;
+import org.cloudbus.cloudsim.power.PowerVm;
+
 import java.util.List;
 
+/**
+ * Strategy: least-disruptive consolidation.
+ * Among hosts flagged UNDERLOADED, power down the one hosting the fewest
+ * guest VMs, minimizing the number of VMs that must be evacuated as a
+ * side effect of the shutdown.
+ */
 public class planner_v2 implements Planner<LoadState[], int[]> {
 
-    private static final double OVERLOAD_TRIGGER_FRACTION = 0.34;
+    private static final String MODULE_NAME = "planner_v2";
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-        int overloadedCount = 0;
-        for (LoadState state : diagnosis) {
-            if (state == LoadState.OVERLOADED) {
-                overloadedCount++;
+        List<HostEntity> hosts = readSpace.getAllHosts();
+
+        HostEntity best = null;
+        int bestVmCount = Integer.MAX_VALUE;
+
+        for (int i = 0; i < diagnosis.length && i < hosts.size(); i++) {
+            if (diagnosis[i] != LoadState.UNDERLOADED) {
+                continue;
+            }
+            HostEntity host = hosts.get(i);
+            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)) {
+                continue;
+            }
+            if (readSpace.isHostPoweredDown(host) || readSpace.isHostPoweringUp(host)) {
+                continue;
+            }
+            int vmCount = readSpace.getVmListForHost(host).size();
+            if (vmCount < bestVmCount) {
+                bestVmCount = vmCount;
+                best = host;
             }
         }
 
-        if (diagnosis.length == 0 || (double) overloadedCount / diagnosis.length < OVERLOAD_TRIGGER_FRACTION) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v2] overload fraction below trigger, no power-up requested");
+        if (best == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] no underloaded host eligible for power-down");
             return new int[0];
         }
 
-        List<HostEntity> hosts = readSpace.getAllHosts();
-        for (HostEntity host : hosts) {
-            if (readSpace.isHostPoweredDown(host) && !readSpace.isHostPermanentlyDead(host) && !readSpace.isHostFailed(host) && !readSpace.isHostPoweringUp(host)) {
-                int hostId = readSpace.getId(host);
-                Log.printlnConcat(readSpace.getNow(), ": [planner_v2] fleet overload fraction=", (double) overloadedCount / diagnosis.length, ", powering up host ", hostId);
-                return new int[] { hostId };
-            }
-        }
-
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v2] fleet overloaded but no dormant host available to power up");
-        return new int[0];
+        int hostId = readSpace.getId(best);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] powering down host " + hostId + " carrying only " + bestVmCount + " vms");
+        return new int[]{hostId};
     }
 
     @Override
     public String inputSemantic() {
-        return "host-loadstate-fleetwide-overload-pressure";
+        return "host-cpu-load-consolidation-candidate";
     }
 
     @Override
     public String outputSemantic() {
-        return "host-power-up";
+        return "power-down-least-disruptive-host";
     }
 
     @Override
@@ -52,6 +75,6 @@ public class planner_v2 implements Planner<LoadState[], int[]> {
 
     @Override
     public int outputGuid() {
-        return 3011;
+        return 3010;
     }
 }

@@ -1,70 +1,44 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Direct Scaling. Decodes {vmId, tierIndex}, looks up the tier value,
-// and attempts mips scaling unconditionally once bounds are sane. Tracks the
-// finer successful-action signal since requestMipsScaling returns a boolean.
+// Existence and Lifecycle Guard for requestVmDestruction (3004).
+// Refuses to destroy a VM that has not yet been placed on a host, since its
+// host-side bookkeeping may not exist and the outcome would be ambiguous.
 public class executor_v8 implements Executor<int[]> {
-
-    private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v8";
-
-        if (actions == null || actions.length != 2) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 2 ints, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 1) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v8] ", "Malformed payload, expected {vmId}");
             return false;
         }
 
         int vmId = actions[0];
-        int tierIndex = actions[1];
-
         GuestEntity vm = actionSpace.getVmById(vmId);
-        int[] mipsTiers = actionSpace.getMipsTiers();
-
-        if (vm == null || tierIndex < 0 || tierIndex >= mipsTiers.length) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve vm ", vmId,
-                    " or tier index ", tierIndex, " is out of bounds");
+        if (vm == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v8] ", "Nothing to destroy, unknown vm=" + vmId);
             return false;
         }
 
-        double newValue = mipsTiers[tierIndex];
-        boolean succeeded = actionSpace.requestMipsScaling(vm, newValue);
-        if (succeeded) {
-            successfulActionCount++;
+        if (actionSpace.isVmBeingInstantiated(vm)) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v8] ", "Refused destruction, vm=" + vmId + " is still being instantiated and not yet host-resident");
+            return false;
         }
 
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted mips scaling of vm ", vmId,
-                " to tier ", tierIndex, " value ", newValue, ", succeeded ", succeeded);
+        actionSpace.requestVmDestruction(vm);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v8] ", "Destroyed vm=" + vmId);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "scale vm mips to given tier";
+        return "requestVmDestruction: destroy a VM and its workload";
     }
 
     @Override
     public int inputGuid() {
-        return 3005;
-    }
-
-    @Override
-    public int getSuccessfulActionCount() {
-        return successfulActionCount;
+        return 3004;
     }
 }

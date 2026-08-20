@@ -2,53 +2,71 @@ package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
+import org.cloudbus.cloudsim.core.HostEntity;
+import org.cloudbus.cloudsim.core.PowerGuestEntity;
+import org.cloudbus.cloudsim.core.PowerHostEntity;
+import org.cloudbus.cloudsim.Cloudlet;
+import org.cloudbus.cloudsim.Pe;
+import org.cloudbus.cloudsim.power.PowerDatacenter;
+import org.cloudbus.cloudsim.power.PowerHost;
+import org.cloudbus.cloudsim.power.PowerVm;
+
 import java.util.List;
 
+/**
+ * Strategy: idle-empty VM reclamation.
+ * Among VMs flagged UNDERLOADED that currently hold zero cloudlets, picks
+ * the one with the lowest rolling mean utilisation and destroys it
+ * outright. Unlike scale-down strategies this removes the guest entirely,
+ * trading elasticity for maximum resource and cost reclamation on VMs
+ * doing no useful work.
+ */
 public class planner_v11 implements Planner<LoadState[], int[]> {
+
+    private static final String MODULE_NAME = "planner_v11";
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
         List<GuestEntity> vms = readSpace.getVmList();
-        int[] tiers = readSpace.getBwTiers();
-        int limit = Math.min(diagnosis.length, vms.size());
 
-        for (int i = 0; i < limit; i++) {
+        GuestEntity target = null;
+        double lowestMean = Double.MAX_VALUE;
+        for (int i = 0; i < diagnosis.length && i < vms.size(); i++) {
             if (diagnosis[i] != LoadState.UNDERLOADED) {
                 continue;
             }
             GuestEntity vm = vms.get(i);
-            int currentIndex = tierIndexOf(tiers, readSpace.getVmBw(vm));
-            if (currentIndex <= 0) {
+            if (readSpace.isVmMigrating(vm) || readSpace.isVmBeingInstantiated(vm)) {
                 continue;
             }
-            int vmId = readSpace.getId(vm);
-            int targetIndex = currentIndex - 1;
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v11] scaling VM ", vmId, " bandwidth down to tier ", targetIndex);
-            return new int[] { vmId, targetIndex };
-        }
-
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v11] no underloaded VM eligible for bandwidth scale-down");
-        return new int[0];
-    }
-
-    private int tierIndexOf(int[] tiers, double value) {
-        int rounded = (int) Math.round(value);
-        for (int i = 0; i < tiers.length; i++) {
-            if (tiers[i] == rounded) {
-                return i;
+            if (!readSpace.getVmCloudletList(vm).isEmpty()) {
+                continue;
+            }
+            double mean = readSpace.getVmUtilizationMean(vm);
+            if (mean < lowestMean) {
+                lowestMean = mean;
+                target = vm;
             }
         }
-        return -1;
+
+        if (target == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] no underloaded, empty, migratable vm found for reclamation");
+            return new int[0];
+        }
+
+        int vmId = readSpace.getId(target);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] destroying idle empty vm " + vmId);
+        return new int[]{vmId};
     }
 
     @Override
     public String inputSemantic() {
-        return "vm-loadstate-bandwidth-slack";
+        return "vm-cpu-utilisation-idle-empty";
     }
 
     @Override
     public String outputSemantic() {
-        return "bw-scale-down";
+        return "destroy-idle-empty-vm";
     }
 
     @Override
@@ -58,6 +76,6 @@ public class planner_v11 implements Planner<LoadState[], int[]> {
 
     @Override
     public int outputGuid() {
-        return 3007;
+        return 3004;
     }
 }

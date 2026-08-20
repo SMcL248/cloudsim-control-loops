@@ -1,32 +1,19 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Idempotency-Guarded Scaling. Skips firing the action entirely if the
-// vm is already at the requested bandwidth tier value, avoiding redundant churn
-// on the underlying network reconfiguration.
+// Strict Validation Executor for requestBwScaling (3007).
+// Rejects the instruction outright when the tier index is out of range,
+// making no attempt to repair it.
 public class executor_v13 implements Executor<int[]> {
 
     private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v13";
-
-        if (actions == null || actions.length != 2) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 2 ints, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 2) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v13] ", "Malformed payload, expected {vmId, tierIndex}");
             return false;
         }
 
@@ -34,36 +21,29 @@ public class executor_v13 implements Executor<int[]> {
         int tierIndex = actions[1];
 
         GuestEntity vm = actionSpace.getVmById(vmId);
-        int[] bwTiers = actionSpace.getBwTiers();
-
-        if (vm == null || tierIndex < 0 || tierIndex >= bwTiers.length) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve vm ", vmId,
-                    " or tier index ", tierIndex, " is out of bounds");
+        if (vm == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v13] ", "Rejected scaling, unknown vm=" + vmId);
             return false;
         }
 
-        double targetBw = bwTiers[tierIndex];
-        double currentBw = actionSpace.getVmBw(vm);
-
-        if (targetBw == currentBw) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] skipped redundant bw scaling of vm ", vmId,
-                    ", already at value ", currentBw);
+        int[] tiers = actionSpace.getBwTiers();
+        if (tierIndex < 0 || tierIndex >= tiers.length) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v13] ", "Rejected scaling, tierIndex=" + tierIndex + " out of range for vm=" + vmId);
             return false;
         }
 
-        boolean succeeded = actionSpace.requestBwScaling(vm, targetBw);
-        if (succeeded) {
+        double newBw = tiers[tierIndex];
+        boolean ok = actionSpace.requestBwScaling(vm, newBw);
+        if (ok) {
             successfulActionCount++;
         }
-
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted bw scaling of vm ", vmId,
-                " from ", currentBw, " to ", targetBw, ", succeeded ", succeeded);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v13] ", "Requested bw scaling of vm=" + vmId + " to " + newBw + " success=" + ok);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "scale vm bandwidth to given tier, skipped if already at target value";
+        return "requestBwScaling: scale a VM's bandwidth to a given tier";
     }
 
     @Override

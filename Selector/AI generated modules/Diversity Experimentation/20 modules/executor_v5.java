@@ -1,30 +1,20 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Bounds-Validated Creation. Validates tierIndex against the known
-// mips tier count and rejects negative size tier or datacenter ids before
-// attempting creation, instead of blindly forwarding the payload.
+// Defensive Tier-Clamping Executor for requestVmCreation (3003).
+// Clamps out-of-range tier indices into valid bounds rather than rejecting
+// the instruction outright, favouring a best-effort creation attempt over
+// strict refusal. Size tiers are the domain's fixed small/medium/large set.
 public class executor_v5 implements Executor<int[]> {
+
+    private static final int SIZE_TIER_COUNT = 3; // small, medium, large
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v5";
-
-        if (actions == null || actions.length != 3) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 3 ints, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 3) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v5] ", "Malformed payload, expected {tierIndex, sizeTierIndex, datacenterId}");
             return false;
         }
 
@@ -32,30 +22,39 @@ public class executor_v5 implements Executor<int[]> {
         int sizeTierIndex = actions[1];
         int datacenterId = actions[2];
 
-        int tierCount = actionSpace.getMipsTiers().length;
+        int[] mipsTiers = actionSpace.getMipsTiers();
+        int clampedTierIndex = clamp(tierIndex, 0, mipsTiers.length - 1);
+        int clampedSizeIndex = clamp(sizeTierIndex, 0, SIZE_TIER_COUNT - 1);
 
-        if (tierIndex < 0 || tierIndex >= tierCount) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected creation, tier index ", tierIndex,
-                    " out of bounds for ", tierCount, " known tiers");
-            return false;
+        if (clampedTierIndex != tierIndex || clampedSizeIndex != sizeTierIndex) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v5] ", "Clamped out-of-range tiers, requested(" + tierIndex + "," + sizeTierIndex + ") -> used(" + clampedTierIndex + "," + clampedSizeIndex + ")");
         }
 
-        if (sizeTierIndex < 0 || datacenterId < 0) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected creation, negative size tier ",
-                    sizeTierIndex, " or datacenter id ", datacenterId);
-            return false;
+        GuestEntity created = actionSpace.requestVmCreation(clampedTierIndex, clampedSizeIndex, datacenterId);
+        if (created != null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v5] ", "Created vm=" + actionSpace.getId(created) + " in datacenter=" + datacenterId);
+        } else {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v5] ", "Creation request returned null for datacenter=" + datacenterId + ", likely invalid datacenter id");
         }
-
-        GuestEntity created = actionSpace.requestVmCreation(tierIndex, sizeTierIndex, datacenterId);
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted validated creation of vm at tier ", tierIndex,
-                ", size tier ", sizeTierIndex, ", in datacenter ", datacenterId,
-                ", result is ", (created == null ? "null" : "non-null"));
         return true;
+    }
+
+    private int clamp(int value, int min, int max) {
+        if (max < min) {
+            return min;
+        }
+        if (value < min) {
+            return min;
+        }
+        if (value > max) {
+            return max;
+        }
+        return value;
     }
 
     @Override
     public String inputSemantic() {
-        return "create new vm at given tier and size tier in given datacenter, after bounds validation";
+        return "requestVmCreation: create a new VM at a given tier and size";
     }
 
     @Override

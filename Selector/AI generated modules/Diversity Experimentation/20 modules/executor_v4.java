@@ -1,50 +1,54 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Direct Creation. Decodes {tierIndex, sizeTierIndex, datacenterId} and
-// requests vm creation unconditionally, with no bounds validation on the indices.
+// Idempotency and Motion-State Guard for requestVmMigration (3002).
+// Instead of checking destination capacity, this variant checks whether the
+// VM is already in motion or already resident on the target host, avoiding
+// duplicate or pointless migration requests.
 public class executor_v4 implements Executor<int[]> {
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v4";
-
-        if (actions == null || actions.length != 3) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 3 ints, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 2) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] ", "Malformed payload, expected {vmId, targetHostId}");
             return false;
         }
 
-        int tierIndex = actions[0];
-        int sizeTierIndex = actions[1];
-        int datacenterId = actions[2];
+        int vmId = actions[0];
+        int targetHostId = actions[1];
 
-        GuestEntity created = actionSpace.requestVmCreation(tierIndex, sizeTierIndex, datacenterId);
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted creation of vm at tier ", tierIndex,
-                ", size tier ", sizeTierIndex, ", in datacenter ", datacenterId,
-                ", result is ", (created == null ? "null" : "non-null"));
+        GuestEntity vm = actionSpace.getVmById(vmId);
+        HostEntity targetHost = actionSpace.getHostById(targetHostId);
+        if (vm == null || targetHost == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] ", "Rejected migration, unknown reference vm=" + vmId + " host=" + targetHostId);
+            return false;
+        }
+
+        if (actionSpace.isVmMigrating(vm)) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] ", "Skipped migration, vm=" + vmId + " already has a migration in flight");
+            return false;
+        }
+
+        if (actionSpace.getVmListForHost(targetHost).contains(vm)) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] ", "Skipped migration, vm=" + vmId + " already resides on host=" + targetHostId);
+            return false;
+        }
+
+        actionSpace.requestVmMigration(vm, targetHost);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v4] ", "Requested migration of vm=" + vmId + " to host=" + targetHostId);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "create new vm at given tier and size tier in given datacenter";
+        return "requestVmMigration: relocate a VM to a target host";
     }
 
     @Override
     public int inputGuid() {
-        return 3003;
+        return 3002;
     }
 }

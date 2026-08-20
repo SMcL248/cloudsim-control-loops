@@ -1,52 +1,41 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Direct Destruction. Decodes {vmId} and destroys the vm unconditionally
-// once it resolves, with no state checks.
+// Outcome-Verifying Pass-through Executor for requestVmCreation (3003).
+// Trusts the planner's tier indices completely and dispatches them
+// unmodified; differentiates by producing a detailed post-creation
+// confirmation log (or a clear failure diagnosis) rather than pre-validating.
 public class executor_v6 implements Executor<int[]> {
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v6";
-
-        if (actions == null || actions.length != 1) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 1 int, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 3) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v6] ", "Malformed payload, expected {tierIndex, sizeTierIndex, datacenterId}");
             return false;
         }
 
-        int vmId = actions[0];
-        GuestEntity vm = actionSpace.getVmById(vmId);
+        int tierIndex = actions[0];
+        int sizeTierIndex = actions[1];
+        int datacenterId = actions[2];
 
-        if (vm == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve vm ", vmId);
-            return false;
+        GuestEntity created = actionSpace.requestVmCreation(tierIndex, sizeTierIndex, datacenterId);
+        if (created == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v6] ", "Creation rejected for tierIndex=" + tierIndex + " sizeTierIndex=" + sizeTierIndex + " datacenter=" + datacenterId);
+        } else {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v6] ", "Created vm=" + actionSpace.getId(created) + " mips=" + actionSpace.getVmMips(created) + " ram=" + actionSpace.getVmRam(created) + " bw=" + actionSpace.getVmBw(created));
         }
-
-        actionSpace.requestVmDestruction(vm);
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted destruction of vm ", vmId);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "destroy vm";
+        return "requestVmCreation: create a new VM at a given tier and size";
     }
 
     @Override
     public int inputGuid() {
-        return 3004;
+        return 3003;
     }
 }

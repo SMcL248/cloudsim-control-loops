@@ -1,44 +1,42 @@
 package org.cloudbus.cloudsim.examples;
 
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
+
 import java.util.List;
 
+// Host level - guest co-location density relative to PE count.
 public class monitor_v5 implements Monitor<double[]> {
+
+    private static final int OUTPUT_GUID = 1200;
 
     @Override
     public double[] observe(ReadSpace readSpace) {
         List<HostEntity> hosts = readSpace.getAllHosts();
         double[] result = new double[hosts.size()];
+
         for (int i = 0; i < hosts.size(); i++) {
             HostEntity host = hosts.get(i);
-            if (readSpace.isHostPermanentlyDead(host)) {
-                result[i] = 2.0;
-            } else if (readSpace.isHostFailed(host)) {
-                result[i] = 1.0;
-            } else {
-                result[i] = 0.0;
-            }
+            int guestCount = readSpace.getVmListForHost(host).size();
+            int peCount = readSpace.getHostPeCount(host);
+            result[i] = (peCount > 0) ? (guestCount / (double) peCount) : 0.0;
         }
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v5] classified failure state for ", hosts.size(), " hosts");
+
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v5] computed host-guest-packing-density for ", hosts.size(), " hosts.");
+
         return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "host-failure-state-code";
+        return "host-guest-packing-density: number of VMs currently hosted divided by the host's PE count, a proxy "
+                + "for co-location pressure per processing element. Since PEs represent a MIPS-rate ceiling that "
+                + "degrades throughput rather than a hard slot count, this is a pressure indicator, not an "
+                + "occupancy fraction. Index i corresponds to getAllHosts().get(i).";
     }
 
     @Override
     public int outputGuid() {
-        return 1200;
+        return OUTPUT_GUID;
     }
 }

@@ -1,62 +1,45 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: State-Guarded Power-Up. Only fires when the host is confirmed to be
-// powered down and not permanently dead, avoiding redundant or futile power-up
-// attempts on hosts that are already on or beyond recovery.
+// State-Aware Idempotency Executor for requestHostPowerUp (3011).
+// Skips hosts that are not actually powered down, are already mid power-up,
+// or are permanently dead, avoiding a futile or redundant power-up request.
 public class executor_v20 implements Executor<int[]> {
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v20";
-
-        if (actions == null || actions.length != 1) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 1 int, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 1) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v20] ", "Malformed payload, expected {hostId}");
             return false;
         }
 
         int hostId = actions[0];
         HostEntity host = actionSpace.getHostById(hostId);
-
         if (host == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve host ", hostId);
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v20] ", "Rejected power up, unknown host=" + hostId);
             return false;
         }
 
         if (actionSpace.isHostPermanentlyDead(host)) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] refused power up of host ", hostId,
-                    ", host is permanently dead and cannot be revived");
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v20] ", "Skipped power up, host=" + hostId + " is permanently dead");
             return false;
         }
 
-        if (!actionSpace.isHostPoweredDown(host)) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] skipped power up of host ", hostId,
-                    ", host is not currently powered down");
+        if (!actionSpace.isHostPoweredDown(host) || actionSpace.isHostPoweringUp(host)) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v20] ", "Skipped power up, host=" + hostId + " is not in a powered-down, ready state");
             return false;
         }
 
         actionSpace.requestHostPowerUp(host);
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted power up of host ", hostId,
-                " after confirming it is powered down and not permanently dead");
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v20] ", "Powered up host=" + hostId);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "power up host, gated on host being powered down and not permanently dead";
+        return "requestHostPowerUp: power on a host";
     }
 
     @Override

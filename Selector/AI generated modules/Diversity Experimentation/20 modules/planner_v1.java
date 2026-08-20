@@ -1,51 +1,80 @@
 package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
+import org.cloudbus.cloudsim.core.PowerGuestEntity;
+import org.cloudbus.cloudsim.core.PowerHostEntity;
+import org.cloudbus.cloudsim.Cloudlet;
+import org.cloudbus.cloudsim.Pe;
+import org.cloudbus.cloudsim.power.PowerDatacenter;
+import org.cloudbus.cloudsim.power.PowerHost;
+import org.cloudbus.cloudsim.power.PowerVm;
+
 import java.util.List;
 
+/**
+ * Strategy: capacity-relief power-up.
+ * When any host is flagged OVERLOADED, bring the largest-capacity powered-down
+ * host online to absorb the excess load. Candidate ranking is purely by total
+ * MIPS capacity, on the assumption that the biggest available host gives the
+ * most relief per power-up action.
+ */
 public class planner_v1 implements Planner<LoadState[], int[]> {
+
+    private static final String MODULE_NAME = "planner_v1";
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
         List<HostEntity> hosts = readSpace.getAllHosts();
-        HostEntity chosen = null;
-        int fewestVms = Integer.MAX_VALUE;
 
-        int limit = Math.min(diagnosis.length, hosts.size());
-        for (int i = 0; i < limit; i++) {
-            if (diagnosis[i] != LoadState.UNDERLOADED) {
-                continue;
-            }
-            HostEntity host = hosts.get(i);
-            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host) || readSpace.isHostPoweredDown(host)) {
-                continue;
-            }
-            int vmCount = readSpace.getVmListForHost(host).size();
-            if (vmCount < fewestVms) {
-                fewestVms = vmCount;
-                chosen = host;
+        boolean overloadPresent = false;
+        for (int i = 0; i < diagnosis.length && i < hosts.size(); i++) {
+            if (diagnosis[i] == LoadState.OVERLOADED) {
+                overloadPresent = true;
+                break;
             }
         }
 
-        if (chosen == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v1] no idle host available for consolidation power-down");
+        if (!overloadPresent) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] no host overload detected, no action taken");
             return new int[0];
         }
 
-        int hostId = readSpace.getId(chosen);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v1] host ", hostId, " selected for power-down, hosted VM count=", fewestVms);
-        return new int[] { hostId };
+        HostEntity best = null;
+        double bestCapacity = -1.0;
+        for (HostEntity host : hosts) {
+            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)) {
+                continue;
+            }
+            if (!readSpace.isHostPoweredDown(host) || readSpace.isHostPoweringUp(host)) {
+                continue;
+            }
+            double capacity = readSpace.getHostTotalMips(host);
+            if (capacity > bestCapacity) {
+                bestCapacity = capacity;
+                best = host;
+            }
+        }
+
+        if (best == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] overload detected but no powered-down host available to power up");
+            return new int[0];
+        }
+
+        int hostId = readSpace.getId(best);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] powering up host " + hostId + " with capacity " + bestCapacity + " to relieve overload");
+        return new int[]{hostId};
     }
 
     @Override
     public String inputSemantic() {
-        return "host-loadstate-underload-consolidation-candidate";
+        return "host-cpu-load-capacity-relief";
     }
 
     @Override
     public String outputSemantic() {
-        return "host-power-down";
+        return "power-up-largest-capacity-host";
     }
 
     @Override
@@ -55,6 +84,6 @@ public class planner_v1 implements Planner<LoadState[], int[]> {
 
     @Override
     public int outputGuid() {
-        return 3010;
+        return 3011;
     }
 }

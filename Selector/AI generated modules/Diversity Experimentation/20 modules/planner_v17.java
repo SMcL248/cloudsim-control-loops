@@ -1,60 +1,80 @@
 package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
+import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
+import org.cloudbus.cloudsim.core.PowerGuestEntity;
+import org.cloudbus.cloudsim.core.PowerHostEntity;
+import org.cloudbus.cloudsim.Cloudlet;
+import org.cloudbus.cloudsim.Pe;
+import org.cloudbus.cloudsim.power.PowerDatacenter;
+import org.cloudbus.cloudsim.power.PowerHost;
+import org.cloudbus.cloudsim.power.PowerVm;
+
+import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Strategy: time-rotation power-up (wear levelling).
+ * When any host is flagged OVERLOADED, this planner does not rank
+ * powered-down hosts by capacity; instead it rotates through them using
+ * the current simulation time as a cursor. This spreads power-up cycles
+ * evenly across the idle fleet over the life of the simulation rather
+ * than always favouring the same "best" host.
+ */
 public class planner_v17 implements Planner<LoadState[], int[]> {
 
-    private static final double OVERLOAD_TRIGGER_FRACTION = 0.34;
+    private static final String MODULE_NAME = "planner_v17";
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-        int overloadedCount = 0;
-        for (LoadState state : diagnosis) {
-            if (state == LoadState.OVERLOADED) {
-                overloadedCount++;
+        List<HostEntity> hosts = readSpace.getAllHosts();
+
+        boolean overloadPresent = false;
+        for (int i = 0; i < diagnosis.length && i < hosts.size(); i++) {
+            if (diagnosis[i] == LoadState.OVERLOADED) {
+                overloadPresent = true;
+                break;
             }
         }
 
-        if (diagnosis.length == 0 || (double) overloadedCount / diagnosis.length < OVERLOAD_TRIGGER_FRACTION) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v17] overload fraction below trigger, no power-up requested");
+        if (!overloadPresent) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] no host overload detected, no action taken");
             return new int[0];
         }
 
-        List<HostEntity> hosts = readSpace.getAllHosts();
-        HostEntity cheapestHost = null;
-        double lowestMaxPower = Double.MAX_VALUE;
-
+        List<HostEntity> poweredDown = new ArrayList<HostEntity>();
         for (HostEntity host : hosts) {
-            if (!readSpace.isHostPoweredDown(host) || readSpace.isHostPermanentlyDead(host) || readSpace.isHostFailed(host) || readSpace.isHostPoweringUp(host)) {
+            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)) {
                 continue;
             }
-            double maxPower = readSpace.getHostMaxPower(host);
-            if (maxPower < lowestMaxPower) {
-                lowestMaxPower = maxPower;
-                cheapestHost = host;
+            if (readSpace.isHostPoweredDown(host) && !readSpace.isHostPoweringUp(host)) {
+                poweredDown.add(host);
             }
         }
 
-        if (cheapestHost == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v17] fleet overloaded but no dormant host available to power up");
+        if (poweredDown.isEmpty()) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] overload detected but no powered-down host available in rotation");
             return new int[0];
         }
 
-        int hostId = readSpace.getId(cheapestHost);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v17] powering up cheapest dormant host ", hostId, " (max power=", lowestMaxPower, ")");
-        return new int[] { hostId };
+        long cursor = (long) readSpace.getNow();
+        int index = (int) (cursor % poweredDown.size());
+        HostEntity chosen = poweredDown.get(index);
+
+        int hostId = readSpace.getId(chosen);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] rotation cursor " + index + " selected host " + hostId + " for power-up");
+        return new int[]{hostId};
     }
 
     @Override
     public String inputSemantic() {
-        return "host-loadstate-fleetwide-overload-pressure";
+        return "host-cpu-load-capacity-relief";
     }
 
     @Override
     public String outputSemantic() {
-        return "host-power-up";
+        return "power-up-round-robin-host";
     }
 
     @Override

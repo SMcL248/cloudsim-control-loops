@@ -2,97 +2,85 @@ package org.cloudbus.cloudsim.examples;// always include
 
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
+import org.cloudbus.cloudsim.core.HostEntity;
+import org.cloudbus.cloudsim.core.PowerGuestEntity;
+import org.cloudbus.cloudsim.core.PowerHostEntity;
+import org.cloudbus.cloudsim.Cloudlet;
+import org.cloudbus.cloudsim.Pe;
+import org.cloudbus.cloudsim.power.PowerDatacenter;
+import org.cloudbus.cloudsim.power.PowerHost;
+import org.cloudbus.cloudsim.power.PowerVm;
+
 import java.util.List;
 
+/**
+ * Strategy: power-efficiency ranked consolidation.
+ * Among hosts flagged UNDERLOADED, ranks candidates by watts-per-MIPS at
+ * maximum utilisation (max power divided by total MIPS capacity) rather
+ * than by disruption. The least energy-efficient host - typically the
+ * oldest hardware - is shut down first, prioritising energy goals over
+ * migration-count minimisation.
+ */
 public class planner_v18 implements Planner<LoadState[], int[]> {
 
-    private static final double STABLE_VARIATION_THRESHOLD = 0.15;
+    private static final String MODULE_NAME = "planner_v18";
 
     @Override
     public int[] plan(LoadState[] diagnosis, ReadSpace readSpace) {
-        List<GuestEntity> vms = readSpace.getVmList();
-        int limit = Math.min(diagnosis.length, vms.size());
-        int[] tiers = readSpace.getMipsTiers();
+        List<HostEntity> hosts = readSpace.getAllHosts();
 
-        GuestEntity worstVm = null;
-        double worstMeanThroughput = -1;
-        double worstVariation = 0;
+        HostEntity worst = null;
+        double worstEfficiency = -1.0;
 
-        for (int i = 0; i < limit; i++) {
-            if (diagnosis[i] != LoadState.OVERLOADED) {
+        for (int i = 0; i < diagnosis.length && i < hosts.size(); i++) {
+            if (diagnosis[i] != LoadState.UNDERLOADED) {
                 continue;
             }
-            GuestEntity vm = vms.get(i);
-            double vmMips = readSpace.getVmMips(vm);
-            if (vmMips <= 0) {
+            HostEntity host = hosts.get(i);
+            if (readSpace.isHostFailed(host) || readSpace.isHostPermanentlyDead(host)) {
                 continue;
             }
-            double meanUtil = readSpace.getVmUtilizationMean(vm);
-            double madUtil = readSpace.getVmUtilizationMad(vm);
-            // MAD is on a fractional-utilisation basis, not MIPS-scaled; multiply by the
-            // VM's MIPS rating before combining it with a MIPS-scaled quantity.
-            double meanThroughput = meanUtil * vmMips;
-            double madThroughput = madUtil * vmMips;
-
-            if (meanThroughput > worstMeanThroughput) {
-                worstMeanThroughput = meanThroughput;
-                worstVm = vm;
-                worstVariation = (meanThroughput > 0) ? madThroughput / meanThroughput : Double.MAX_VALUE;
+            if (readSpace.isHostPoweredDown(host) || readSpace.isHostPoweringUp(host)) {
+                continue;
+            }
+            double totalMips = readSpace.getHostTotalMips(host);
+            if (totalMips <= 0.0) {
+                continue;
+            }
+            double efficiency = readSpace.getHostMaxPower(host) / totalMips;
+            if (efficiency > worstEfficiency) {
+                worstEfficiency = efficiency;
+                worst = host;
             }
         }
 
-        if (worstVm == null) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v18] no overloaded VM with usable utilisation statistics found");
+        if (worst == null) {
+            Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] no underloaded host with valid efficiency profile found");
             return new int[0];
         }
 
-        int currentIndex = tierIndexOf(tiers, readSpace.getVmMips(worstVm));
-        if (currentIndex < 0) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v18] VM ", readSpace.getId(worstVm), " current MIPS does not match a known tier, aborting");
-            return new int[0];
-        }
-
-        boolean stableOverload = worstVariation < STABLE_VARIATION_THRESHOLD;
-        int jump = stableOverload ? 2 : 1;
-        int targetIndex = Math.min(tiers.length - 1, currentIndex + jump);
-
-        if (targetIndex == currentIndex) {
-            Log.printlnConcat(readSpace.getNow(), ": [planner_v18] VM ", readSpace.getId(worstVm), " already at highest MIPS tier");
-            return new int[0];
-        }
-
-        int vmId = readSpace.getId(worstVm);
-        Log.printlnConcat(readSpace.getNow(), ": [planner_v18] VM ", vmId, " sustained throughput=", worstMeanThroughput, ", variation=", worstVariation, ", scaling MIPS from tier ", currentIndex, " to tier ", targetIndex);
-        return new int[] { vmId, targetIndex };
-    }
-
-    private int tierIndexOf(int[] tiers, double value) {
-        int rounded = (int) Math.round(value);
-        for (int i = 0; i < tiers.length; i++) {
-            if (tiers[i] == rounded) {
-                return i;
-            }
-        }
-        return -1;
+        int hostId = readSpace.getId(worst);
+        Log.printlnConcat(readSpace.getNow(), ": [" + MODULE_NAME + "] powering down least efficient host " + hostId + " with watts-per-mips " + worstEfficiency);
+        return new int[]{hostId};
     }
 
     @Override
     public String inputSemantic() {
-        return "vm-loadstate-cpu-overload-confidence";
+        return "host-power-efficiency-underload";
     }
 
     @Override
     public String outputSemantic() {
-        return "mips-scale-up";
+        return "power-down-least-efficient-host";
     }
 
     @Override
     public int inputGuid() {
-        return 2300;
+        return 2200;
     }
 
     @Override
     public int outputGuid() {
-        return 3005;
+        return 3010;
     }
 }

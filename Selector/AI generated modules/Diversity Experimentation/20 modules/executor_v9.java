@@ -1,32 +1,19 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Clamped Scaling. Rather than rejecting an out-of-range tier index,
-// clamps it into the nearest valid tier and proceeds, treating out-of-range
-// requests as a saturation signal rather than a hard failure.
+// Defensive Tier-Clamping Executor for requestMipsScaling (3005).
+// Clamps an out-of-range tier index into bounds and always attempts the
+// scaling call once the VM is found, favouring best-effort execution.
 public class executor_v9 implements Executor<int[]> {
 
     private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v9";
-
-        if (actions == null || actions.length != 2) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 2 ints, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 2) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v9] ", "Malformed payload, expected {vmId, tierIndex}");
             return false;
         }
 
@@ -35,37 +22,28 @@ public class executor_v9 implements Executor<int[]> {
 
         GuestEntity vm = actionSpace.getVmById(vmId);
         if (vm == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve vm ", vmId);
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v9] ", "Rejected scaling, unknown vm=" + vmId);
             return false;
         }
 
-        int[] mipsTiers = actionSpace.getMipsTiers();
-        int clampedIndex = tierIndex;
-        if (clampedIndex < 0) {
-            clampedIndex = 0;
-        } else if (clampedIndex >= mipsTiers.length) {
-            clampedIndex = mipsTiers.length - 1;
-        }
-
+        int[] tiers = actionSpace.getMipsTiers();
+        int clampedIndex = Math.max(0, Math.min(tierIndex, tiers.length - 1));
         if (clampedIndex != tierIndex) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] clamped requested tier ", tierIndex,
-                    " to nearest valid tier ", clampedIndex, " for vm ", vmId);
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v9] ", "Clamped mips tierIndex " + tierIndex + " -> " + clampedIndex);
         }
 
-        double newValue = mipsTiers[clampedIndex];
-        boolean succeeded = actionSpace.requestMipsScaling(vm, newValue);
-        if (succeeded) {
+        double newValue = tiers[clampedIndex];
+        boolean ok = actionSpace.requestMipsScaling(vm, newValue);
+        if (ok) {
             successfulActionCount++;
         }
-
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted mips scaling of vm ", vmId,
-                " to clamped tier ", clampedIndex, " value ", newValue, ", succeeded ", succeeded);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v9] ", "Requested mips scaling of vm=" + vmId + " to " + newValue + " success=" + ok);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "scale vm mips to given tier, clamped into valid tier range";
+        return "requestMipsScaling: scale a VM's MIPS to a given tier";
     }
 
     @Override

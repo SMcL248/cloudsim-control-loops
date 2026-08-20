@@ -1,58 +1,53 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Direct Migration. Decodes {vmId, targetHostId} and fires the migration
-// request unconditionally once both entities resolve. No pre-checks on host health
-// or resource feasibility; trusts the Planner completely.
+// State-Aware Idempotency Guard for moveCloudlet (3001).
+// Rather than deeply validating cloudlet/source-VM membership, this variant
+// guards against redundant self-moves and races with an in-flight migration
+// on the destination VM, then trusts the underlying substrate for the rest.
 public class executor_v2 implements Executor<int[]> {
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v2";
-
-        if (actions == null || actions.length != 2) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 2 ints, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 3) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] ", "Malformed payload, expected {cloudletId, fromVmId, toVmId}");
             return false;
         }
 
-        int vmId = actions[0];
-        int targetHostId = actions[1];
+        int cloudletId = actions[0];
+        int fromVmId = actions[1];
+        int toVmId = actions[2];
 
-        GuestEntity vm = actionSpace.getVmById(vmId);
-        HostEntity targetHost = actionSpace.getHostById(targetHostId);
-
-        if (vm == null || targetHost == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve vm ", vmId,
-                    " or target host ", targetHostId);
+        if (fromVmId == toVmId) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] ", "Skipped no-op move, cloudlet=" + cloudletId + " source and destination vm are identical");
             return false;
         }
 
-        actionSpace.requestVmMigration(vm, targetHost);
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted migration of vm ", vmId,
-                " to host ", targetHostId, " with no feasibility pre-check");
+        GuestEntity toVm = actionSpace.getVmById(toVmId);
+        if (toVm == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] ", "Rejected move, unknown destination vm=" + toVmId);
+            return false;
+        }
+
+        if (actionSpace.isVmMigrating(toVm)) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] ", "Skipped move, destination vm=" + toVmId + " is mid-migration, retry later");
+            return false;
+        }
+
+        actionSpace.moveCloudlet(cloudletId, fromVmId, toVmId);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v2] ", "Attempted move of cloudlet=" + cloudletId + " to vm=" + toVmId + " trusting substrate validation");
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "migrate vm to target host";
+        return "moveCloudlet: relocate a cloudlet between two VMs";
     }
 
     @Override
     public int inputGuid() {
-        return 3002;
+        return 3001;
     }
 }

@@ -1,31 +1,19 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Direct Scaling. Ram-scaling counterpart of the direct mips variant:
-// looks up the tier value and attempts the scale unconditionally within bounds.
+// No-op Detection Executor for requestMipsScaling (3005).
+// Rejects out-of-range tier indices outright (no clamping) and skips the
+// call entirely when the VM is already at the requested tier.
 public class executor_v10 implements Executor<int[]> {
 
     private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v10";
-
-        if (actions == null || actions.length != 2) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 2 ints, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 2) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v10] ", "Malformed payload, expected {vmId, tierIndex}");
             return false;
         }
 
@@ -33,33 +21,40 @@ public class executor_v10 implements Executor<int[]> {
         int tierIndex = actions[1];
 
         GuestEntity vm = actionSpace.getVmById(vmId);
-        int[] ramTiers = actionSpace.getRamTiers();
-
-        if (vm == null || tierIndex < 0 || tierIndex >= ramTiers.length) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve vm ", vmId,
-                    " or tier index ", tierIndex, " is out of bounds");
+        if (vm == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v10] ", "Rejected scaling, unknown vm=" + vmId);
             return false;
         }
 
-        double newRam = ramTiers[tierIndex];
-        boolean succeeded = actionSpace.requestRamScaling(vm, newRam);
-        if (succeeded) {
-            successfulActionCount++;
+        int[] tiers = actionSpace.getMipsTiers();
+        if (tierIndex < 0 || tierIndex >= tiers.length) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v10] ", "Rejected scaling, tierIndex=" + tierIndex + " out of range for vm=" + vmId);
+            return false;
         }
 
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted ram scaling of vm ", vmId,
-                " to tier ", tierIndex, " value ", newRam, ", succeeded ", succeeded);
+        double targetValue = tiers[tierIndex];
+        double currentValue = actionSpace.getVmMips(vm);
+        if (currentValue == targetValue) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v10] ", "Skipped scaling, vm=" + vmId + " already at mips=" + targetValue);
+            return false;
+        }
+
+        boolean ok = actionSpace.requestMipsScaling(vm, targetValue);
+        if (ok) {
+            successfulActionCount++;
+        }
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v10] ", "Requested mips scaling of vm=" + vmId + " to " + targetValue + " success=" + ok);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "scale vm ram to given tier";
+        return "requestMipsScaling: scale a VM's MIPS to a given tier";
     }
 
     @Override
     public int inputGuid() {
-        return 3006;
+        return 3005;
     }
 
     @Override

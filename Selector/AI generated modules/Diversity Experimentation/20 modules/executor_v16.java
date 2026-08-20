@@ -1,60 +1,48 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Direct Deallocation. Decodes {vmId} and attempts pe deallocation
-// unconditionally once the vm resolves, with no minimum-pe safeguard.
+// Trusting Pass-through Executor for requestPeAllocation (3008).
+// Dispatches directly without inspecting host state, relying on
+// ActionSpace's own boolean result as the success signal, then logs the
+// resulting PE count for confirmation.
 public class executor_v16 implements Executor<int[]> {
 
     private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v16";
-
-        if (actions == null || actions.length != 1) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 1 int, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 1) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v16] ", "Malformed payload, expected {vmId}");
             return false;
         }
 
         int vmId = actions[0];
         GuestEntity vm = actionSpace.getVmById(vmId);
-
         if (vm == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve vm ", vmId);
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v16] ", "Rejected allocation, unknown vm=" + vmId);
             return false;
         }
 
-        boolean succeeded = actionSpace.requestPeDeallocation(vm);
-        if (succeeded) {
+        boolean ok = actionSpace.requestPeAllocation(vm);
+        if (ok) {
             successfulActionCount++;
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v16] ", "Allocated pe for vm=" + vmId + " now numPes=" + actionSpace.getVmNumberOfPes(vm));
+        } else {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v16] ", "Allocation attempt for vm=" + vmId + " returned false, host may be saturated");
         }
-
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted pe deallocation for vm ", vmId,
-                ", succeeded ", succeeded);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "deallocate pe from vm";
+        return "requestPeAllocation: allocate an additional PE to a VM";
     }
 
     @Override
     public int inputGuid() {
-        return 3009;
+        return 3008;
     }
 
     @Override

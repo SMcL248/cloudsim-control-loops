@@ -1,31 +1,19 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
 import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Direct Move. Decodes {cloudletId, fromVmId, toVmId} and attempts the
-// cloudlet relocation unconditionally once all three referenced entities resolve.
-// No feasibility pre-checks are performed; this variant trusts the upstream
-// Planner's decision entirely and simply fires the action.
+// Strict Validation Executor for moveCloudlet (3001).
+// Verifies the cloudlet actually belongs to the source VM and that the
+// destination VM is not mid-migration before dispatching. Rejects (does
+// not call the underlying API, returns false) on any failed precondition.
 public class executor_v1 implements Executor<int[]> {
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v1";
-
-        if (actions == null || actions.length != 3) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 3 ints, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 3) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] ", "Malformed payload, expected {cloudletId, fromVmId, toVmId}");
             return false;
         }
 
@@ -33,25 +21,38 @@ public class executor_v1 implements Executor<int[]> {
         int fromVmId = actions[1];
         int toVmId = actions[2];
 
-        Cloudlet cloudlet = actionSpace.getCloudletById(cloudletId);
+        Cloudlet cl = actionSpace.getCloudletById(cloudletId);
+        if (cl == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] ", "Rejected move, unknown cloudlet id=" + cloudletId);
+            return false;
+        }
+
         GuestEntity fromVm = actionSpace.getVmById(fromVmId);
         GuestEntity toVm = actionSpace.getVmById(toVmId);
+        if (fromVm == null || toVm == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] ", "Rejected move, unknown vm reference fromVm=" + fromVmId + " toVm=" + toVmId);
+            return false;
+        }
 
-        if (cloudlet == null || fromVm == null || toVm == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve one or more entities for cloudlet ",
-                    cloudletId, ", from vm ", fromVmId, ", to vm ", toVmId);
+        boolean residesOnFromVm = actionSpace.getVmCloudletList(fromVm).contains(cl);
+        if (!residesOnFromVm) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] ", "Rejected move, cloudlet=" + cloudletId + " does not currently reside on vm=" + fromVmId);
+            return false;
+        }
+
+        if (actionSpace.isVmMigrating(toVm)) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] ", "Rejected move, destination vm=" + toVmId + " is currently migrating");
             return false;
         }
 
         actionSpace.moveCloudlet(cloudletId, fromVmId, toVmId);
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted move of cloudlet ", cloudletId,
-                " from vm ", fromVmId, " to vm ", toVmId);
+        Log.printlnConcat(actionSpace.getNow(), ": [executor_v1] ", "Moved cloudlet=" + cloudletId + " from vm=" + fromVmId + " to vm=" + toVmId);
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "move cloudlet from source vm to destination vm";
+        return "moveCloudlet: relocate a cloudlet between two VMs";
     }
 
     @Override

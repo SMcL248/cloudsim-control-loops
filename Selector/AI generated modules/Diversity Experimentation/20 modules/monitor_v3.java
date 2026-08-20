@@ -1,38 +1,40 @@
 package org.cloudbus.cloudsim.examples;
 
 import org.cloudbus.cloudsim.Log;
-import org.cloudbus.cloudsim.core.GuestEntity;
 import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
+
 import java.util.List;
 
+// Host level - RAM allocation pressure per host.
 public class monitor_v3 implements Monitor<double[]> {
+
+    private static final int OUTPUT_GUID = 1200;
 
     @Override
     public double[] observe(ReadSpace readSpace) {
         List<HostEntity> hosts = readSpace.getAllHosts();
         double[] result = new double[hosts.size()];
+
         for (int i = 0; i < hosts.size(); i++) {
             HostEntity host = hosts.get(i);
-            result[i] = readSpace.getHostAvailableRam(host);
+            double totalRam = readSpace.getHostTotalRam(host);
+            double availableRam = readSpace.getHostAvailableRam(host);
+            result[i] = (totalRam > 0.0) ? ((totalRam - availableRam) / totalRam) : 0.0;
         }
-        Log.printlnConcat(readSpace.getNow(), ": [monitor_v3] sampled RAM headroom for ", hosts.size(), " hosts");
+
+        Log.printlnConcat(readSpace.getNow(), ": [monitor_v3] computed host-ram-pressure-ratio for ", hosts.size(), " hosts.");
+
         return result;
     }
 
     @Override
     public String outputSemantic() {
-        return "host-ram-headroom-absolute";
+        return "host-ram-pressure-ratio: fraction of a host's total RAM currently allocated to guests, computed as "
+                + "1 - (availableRam / totalRam), range 0.0-1.0. Index i corresponds to getAllHosts().get(i).";
     }
 
     @Override
     public int outputGuid() {
-        return 1200;
+        return OUTPUT_GUID;
     }
 }

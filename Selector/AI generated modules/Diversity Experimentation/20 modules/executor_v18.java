@@ -1,52 +1,51 @@
-package org.cloudbus.cloudsim.examples;// always include
+package org.cloudbus.cloudsim.examples;
 
-// Import whats needed
 import org.cloudbus.cloudsim.Log;
 import org.cloudbus.cloudsim.core.GuestEntity;
-import org.cloudbus.cloudsim.core.HostEntity;
-import org.cloudbus.cloudsim.core.PowerGuestEntity;
-import org.cloudbus.cloudsim.core.PowerHostEntity;
-import org.cloudbus.cloudsim.Cloudlet;
-import org.cloudbus.cloudsim.Pe;
-import org.cloudbus.cloudsim.power.PowerDatacenter;
-import org.cloudbus.cloudsim.power.PowerHost;
-import org.cloudbus.cloudsim.power.PowerVm;
 
-
-// Strategy: Direct Power-Down. Decodes {hostId} and fires the power-down request
-// unconditionally once the host resolves, with no state checks.
+// Trusting Pass-through Executor for requestPeDeallocation (3009).
+// Dispatches directly without inspecting current PE count, relying on
+// ActionSpace's own boolean result as the success signal.
 public class executor_v18 implements Executor<int[]> {
+
+    private int successfulActionCount = 0;
 
     @Override
     public boolean execute(int[] actions, ActionSpace actionSpace) {
-        String tag = "executor_v18";
-
-        if (actions == null || actions.length != 1) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] rejected malformed payload, expected 1 int, got ",
-                    (actions == null ? "null" : actions.length));
+        if (actions == null || actions.length < 1) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v18] ", "Malformed payload, expected {vmId}");
             return false;
         }
 
-        int hostId = actions[0];
-        HostEntity host = actionSpace.getHostById(hostId);
-
-        if (host == null) {
-            Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] cannot resolve host ", hostId);
+        int vmId = actions[0];
+        GuestEntity vm = actionSpace.getVmById(vmId);
+        if (vm == null) {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v18] ", "Rejected deallocation, unknown vm=" + vmId);
             return false;
         }
 
-        actionSpace.requestHostPowerDown(host);
-        Log.printlnConcat(actionSpace.getNow(), ": [" + tag + "] attempted power down of host ", hostId);
+        boolean ok = actionSpace.requestPeDeallocation(vm);
+        if (ok) {
+            successfulActionCount++;
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v18] ", "Deallocated pe for vm=" + vmId + " now numPes=" + actionSpace.getVmNumberOfPes(vm));
+        } else {
+            Log.printlnConcat(actionSpace.getNow(), ": [executor_v18] ", "Deallocation attempt for vm=" + vmId + " returned false");
+        }
         return true;
     }
 
     @Override
     public String inputSemantic() {
-        return "power down host";
+        return "requestPeDeallocation: deallocate a PE from a VM";
     }
 
     @Override
     public int inputGuid() {
-        return 3010;
+        return 3009;
+    }
+
+    @Override
+    public int getSuccessfulActionCount() {
+        return successfulActionCount;
     }
 }
